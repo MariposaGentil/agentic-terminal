@@ -1,0 +1,14 @@
+=== agentic-terminal session ci_sagent_195617-ci_sterm_195617-20260807-152257 :: agent=ci_sagent_195617 term=ci_sterm_195617 :: started Fri Aug  7 03:22:57 PM CEST 2026 ===
+: ── agentic-terminal ─────────────────────────────
+: You work here. The agent watches this session.
+: Detach (leave running):  Ctrl-b  then  d
+: Reattach later:          tmux attach -t ci_sterm_195617
+: ────────────────────────────────────────────────
+
+ erik  /tmp/tmp.USqvBjDGh7  : ── agentic-terminal ─────────────────────────────
+ erik  /tmp/tmp.USqvBjDGh7  : You work here. The agent watches this session.
+ erik  /tmp/tmp.USqvBjDGh7  : Detach (leave running):  Ctrl-b  then  d
+-bash: syntax error near unexpected token `('
+ erik  /tmp/tmp.USqvBjDGh7  2  : Reattach later:          tmux attach -t ci_sterm_195617
+ erik  /tmp/tmp.USqvBjDGh7  : ────────────────────────────────────────────────
+ erik  /tmp/tmp.USqvBjDGh7  

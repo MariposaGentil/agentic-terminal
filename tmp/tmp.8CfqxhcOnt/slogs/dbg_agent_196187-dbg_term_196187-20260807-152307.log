@@ -1,0 +1,14 @@
+=== agentic-terminal session dbg_agent_196187-dbg_term_196187-20260807-152307 :: agent=dbg_agent_196187 term=dbg_term_196187 :: started Fri Aug  7 03:23:07 PM CEST 2026 ===
+: ── agentic-terminal ─────────────────────────────
+: You work here. The agent watches this session.
+: Detach (leave running):  Ctrl-b  then  d
+: Reattach later:          tmux attach -t dbg_term_196187
+: ────────────────────────────────────────────────
+
+ erik  /tmp/tmp.8CfqxhcOnt  : ── agentic-terminal ─────────────────────────────
+ erik  /tmp/tmp.8CfqxhcOnt  : You work here. The agent watches this session.
+ erik  /tmp/tmp.8CfqxhcOnt  : Detach (leave running):  Ctrl-b  then  d
+-bash: syntax error near unexpected token `('
+ erik  /tmp/tmp.8CfqxhcOnt  2  : Reattach later:          tmux attach -t dbg_term_196187
+ erik  /tmp/tmp.8CfqxhcOnt  : ──────────────────────────────────────────────── M
+ erik  /tmp/tmp.8CfqxhcOnt  

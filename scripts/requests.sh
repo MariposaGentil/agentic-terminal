@@ -22,6 +22,9 @@ if [ -f "$COMMENT_STATE" ]; then
 fi
 
 prefix="$COMMENT_PREFIX"
+sm_esc="$(printf '%s' "$SEND_MARKER" | sed 's/[][\\.*^$()+?{|]/\\&/g')"
+smr_esc="$(printf '%s' "${SEND_MARKER_REPL:-# AT:}" | sed 's/[][\\.*^$()+?{|]/\\&/g')"
+marker_skip="(${sm_esc}|${smr_esc}) (BEGIN|DONE)"
 
 # Extract typed comment lines: strip an optional prompt prefix that ends in a
 # SYMBOL (non-alnum, non-space: $, >, %, ], or a powerline glyph) + whitespace,
@@ -32,7 +35,7 @@ mapfile -t comments < <(
     tmux capture-pane -pt "$TERM_SESSION" -S -5000 2>/dev/null \
         | sed -nE "s/^(.*[^[:alnum:][:space:]][[:space:]]+)?(${prefix}[[:space:]]?.*)$/\2/p" \
         | sed -E "s/^${prefix}[[:space:]]?//" \
-        | grep -vE '^(AT#|AGENT CMD|--- )' || true
+        | grep -vE "^${marker_skip}|AGENT CMD|--- " || true
 )
 
 total="${#comments[@]}"

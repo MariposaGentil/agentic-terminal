@@ -11,7 +11,7 @@ SHELL := /usr/bin/env bash
 LINES ?=
 CMD   ?=
 
-.PHONY: help run setup install-deps start stop read send requests test
+.PHONY: help run setup install-deps start stop read send requests test watch-status reload-watcher stop-watcher ping-selftest
 
 help: ## Show this help
 	@echo "agentic-terminal — available targets:"
@@ -46,6 +46,18 @@ send: ## Send a command to term (requires CMD='...')
 
 requests: ## Print unprocessed comment-prompts from term
 	@./scripts/requests.sh
+
+watch-status: ## Diagnose the term watcher / auto-ping (healthy?)
+	@./scripts/watch.sh status
+
+reload-watcher: ## Repair + verify auto-ping (re-attach, dedupe, self-test)
+	@./scripts/watch.sh reload
+
+ping-selftest: ## Prove a '# comment' is detected and pings the agent
+	@./scripts/watch.sh selftest
+
+stop-watcher: ## Detach the term watcher (turns auto-ping off)
+	@./scripts/watch.sh stop
 
 test: ## Run the test suite (tests/)
 	@bash tests/run.sh

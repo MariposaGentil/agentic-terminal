@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(scripts/**)",
+      "Shell(./scripts/**)",
+      "Shell(make)",
+      "Shell(make *)",
+      "Shell(bash tests/**)",
+      "Shell(bash tests/run.sh)",
+      "Shell(echo *)",
+      "Shell(printf *)",
+      "Shell(sleep *)",
+      "Shell(git)",
+      "Shell(git *)",
+      "Shell(cat *)",
+      "Shell(head *)",
+      "Shell(tail *)",
+      "Shell(rg *)",
+      "Shell(grep *)",
+      "Shell(which *)",
+      "Shell(wc *)",
+      "Shell(cd *)",
+      "Write(scripts/**)",
+      "Write(tmux-agents/**)",
+      "Write(tests/**)",
+      "Write(GUIDE.md)",
+      "Write(README.md)",
+      "Write(Makefile)",
+      "Write(.cursor/**)"
+    ],
+    "deny": []
+  }
+}

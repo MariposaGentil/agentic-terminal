@@ -47,7 +47,7 @@ variable for the current shell:
 
 ```bash
 export AGENT_CMD=cursor-agent    # or: claude, or any custom command
-export AGENT_MODEL=composer       # model the agent uses (empty = CLI default)
+export AGENT_MODEL=opus       # model the agent uses (empty = CLI default)
 ```
 
 `AGENT_MODEL` defaults to `composer`. When set, `start.sh` appends
@@ -74,23 +74,59 @@ From the repo root:
 scripts/start.sh
 ```
 
-By default this opens the **`term` session in a new terminal window** (where
-**you** work), and **attaches the terminal that ran `start` to the `agent`
-session** so you can watch/drive the agent right there (detach with `Ctrl-b d`).
-The agent runs there but is otherwise headless — you interact with it by typing
-comments in the `term` window. Prefer different placement? Set
-`TERM_ATTACH=none` (open term yourself) or `AGENT_ATTACH=none`. It then
-**connects the agent to `term`** by sending it a kickoff
-message that points it at [`.agents/agent-prompt.md`](.agents/agent-prompt.md) —
-the file that defines the agent's role and the `scripts/` tools it uses. Edit
-that file to change how the agent behaves; set `AGENT_PROMPT_MODE=none` if you'd
-rather prompt the agent yourself.
+Both tmux sessions are created **detached** first, then start.sh kicks off the
+agent and reports each step in the terminal you launched from:
+
+```
+[agentic-terminal] Step 1/3: initializing agent CLI 'cursor-agent' (waiting 4s for it to boot)...
+[agentic-terminal] Step 2/3: loading initial prompt from 'tmux-agents/' (agent-prompt.md + N rule(s))...
+[agentic-terminal] Step 3/3: waiting for the agent to be ready before opening 'term'...
+[agentic-terminal] Waiting for 'agent' to finish the initial prompt (up to 90s; the agent keeps working if it takes longer)...
+[agentic-terminal] Initial prompt processed - 'agent' has been idle for 4s (took ~23s).
+```
+
+There is **no fixed countdown**: start **blocks until the agent has finished
+processing its initial prompt** (detected by watching the agent pane go idle),
+and **only then opens `term` in a new terminal window** (where **you** work) — so
+`term` never appears before the agent is ready.
+
+Both sessions stay **detached** and the terminal you launched from is **left
+alone at its own prompt** — start.sh just tells you how to reach **each** session:
+
+```
+[agentic-terminal] Agent is ready -- opening 'x-terminal-emulator' for 'term'...
+[agentic-terminal] Both sessions run DETACHED in tmux. To attach them:
+        term  ->  tmux attach -t term
+        agent ->  tmux attach -t agent
+    Detach again with:  Ctrl-b  then  d
+```
+
+Prefer to take the launching terminal over with the agent? Set
+`AGENT_ATTACH=current`. Other knobs: `AGENT_PROMPT_WAIT=0` (skip the wait and
+open `term` immediately), `AGENT_READY_WAIT` (how long to let the CLI boot before
+the kickoff), `TERM_ATTACH=none` (open term yourself).
+
+The kickoff message
+**connects the agent to `term`**: it points the agent at
+[`tmux-agents/agent-prompt.md`](tmux-agents/agent-prompt.md)
+**and every rule in [`tmux-agents/rules/`](tmux-agents/README.md)** — the files
+that define the agent's role, its rules, and the `scripts/` tools it uses. Edit
+those to change how the agent behaves (a new rule dropped in `tmux-agents/rules/`
+loads on the next start); set `AGENT_PROMPT_MODE=none` if you'd rather prompt the
+agent yourself.
 
 It also records a transcript of the session to
 `logs/<agent>-<term>-<timestamp>.log` (every command and its output) and keeps a
 stable `logs/<agent>.current.log` symlink pointing at the live one (so
 `tail -f logs/agent.current.log` always follows the current session). Transcripts
 older than a week are deleted. See "Session logs" in [`README.md`](README.md).
+
+If you use **`cursor-agent`**, pre-approved tool patterns for this repo are in
+[`.cursor/cli.json`](.cursor/cli.json). Cursor merges that file (from the git
+root down) with `~/.cursor/cli-config.json` when the agent starts here, so
+`scripts/read.sh`, `scripts/send.sh`, `make test`, and common repo edits survive
+a fresh agent process after `make stop` / `make start` without clicking through
+the allow list again.
 
 ### 5. Work normally in the `term` window
 
@@ -172,8 +208,9 @@ failed.
   `LOG_RETENTION_DAYS` (default 7) with `find ... -mtime +N -delete`.
 - Creates the interactive session detached:
   `tmux new-session -d -s "$TERM_SESSION" -c "$REPO_ROOT"`.
-- **Attaches a pane watcher:** `tmux pipe-pane -o -t "$TERM_SESSION" "... exec
-  scripts/term-watch.sh <logfile>"`. The watcher receives everything shown in
+- **Attaches a pane watcher:** closes any existing pipe, then `tmux pipe-pane -t
+  "$TERM_SESSION" "... exec scripts/term-watch.sh <logfile>"` (no `-o`, which
+  would toggle an existing pipe *off*). The watcher receives everything shown in
   `term` (agent + user commands and their output), writes an ANSI-stripped
   transcript to `logs/<AGENT_SESSION>-<TERM_SESSION>-<timestamp>.log` (plus a
   `logs/<AGENT_SESSION>.current.log` symlink to the live one), and handles auto-ping
@@ -181,28 +218,47 @@ failed.
 - Resets the comment-tracking state file so old comments aren't replayed.
 - Creates the agent session **detached**, running your agent:
   `tmux new-session -d -s "$AGENT_SESSION" -c "$REPO_ROOT" "$AGENT_CMD"`. When
-  `AGENT_MODEL` is set (default `composer`), it is appended as
-  `--model <AGENT_MODEL>`.
-- **Connects the agent to `term`:** it **backgrounds** the kickoff (so it can
-  attach to term immediately), waits `AGENT_READY_WAIT` seconds for the CLI to
-  boot, types `AGENT_BOOTSTRAP` into the agent session with `tmux send-keys -l`
-  (literal), waits `AGENT_SUBMIT_DELAY` seconds, then sends `Enter` as a
-  **separate** keystroke to submit it — sending text and Enter
+  `AGENT_MODEL` is set it is appended as   `--model <AGENT_MODEL>`, and `AGENT_ARGS`
+  (default `--auto-review`) is appended so the agent doesn't stop to ask you to
+  approve each command (including the start-up `read.sh`/`requests.sh` calls).
+  `--auto-review` auto-runs safe tool calls and prompts only for risky ones; use
+  `AGENT_ARGS=--force --trust` to run everything with no prompts, or `AGENT_ARGS=`
+  to require approvals. These take effect the next time the agent session is
+  created (relaunch with `make start` after `make stop`).
+- **Connects the agent to `term`** (reporting each step): **step 1/3** waits
+  `AGENT_READY_WAIT` seconds (default 4) so the still-**detached** agent CLI can
+  draw its TUI; **step 2/3** types `AGENT_BOOTSTRAP` into the agent session with
+  `tmux send-keys -l` (literal), waits `AGENT_SUBMIT_DELAY` seconds, then sends
+  `Enter` as a **separate** keystroke to submit it — sending text and Enter
   together often leaves the prompt typed but not submitted. That message tells
   the agent to read `AGENT_PROMPT_FILE`
-  ([`.agents/agent-prompt.md`](.agents/agent-prompt.md)) and start driving `term`
+  ([`tmux-agents/agent-prompt.md`](tmux-agents/agent-prompt.md) + `tmux-agents/rules/`) and start driving `term`
   via the toolkit. This is agent-CLI-agnostic — the kickoff is just typed into
   the interactive agent, which then reads the file itself. Set
   `AGENT_PROMPT_MODE=none` to skip it.
-- **Shows the sessions:** `term` opens in a new window when `TERM_ATTACH=emulator`
+- **Blocks until the agent is ready (this is the only wait — there is no fixed
+  countdown):** **step 3/3** calls `wait_for_agent_prompt_done` (in `_common.sh`),
+  which watches the agent pane's **visible screen** and, once it stops changing
+  for `AGENT_IDLE_STABLE` seconds (default 4), prints
+  `Initial prompt processed - ... (took ~Ns)`. This stability check is
+  agent-CLI-agnostic (no brittle status-text matching) and never blocks past
+  `AGENT_PROMPT_WAIT` seconds (default 90; `0` skips the wait and opens `term`
+  immediately). It is skipped when `AGENT_ATTACH=current` (you watch it live) or
+  when no kickoff was sent (reused agent / `AGENT_PROMPT_MODE=none`).
+- **Opens `term` only once the agent is ready:** after the wait above, `term`
+  opens in a new window when `TERM_ATTACH=emulator`
   (default) via `$TERMINAL_EMULATOR -e tmux attach -t "$TERM_SESSION"` (only when
-  the session was just created). The calling terminal then attaches to `agent`
-  when `AGENT_ATTACH=current` (default): `exec tmux attach -t "$AGENT_SESSION"`
-  — or `tmux switch-client` if already inside tmux. `none` on either just prints
-  the attach command. The `exec` is why the kickoff is backgrounded above
-  (backgrounded jobs survive the `exec`).
+  the session was just created); `TERM_ATTACH=none` just leaves it detached.
+- **Prompts how to reach both sessions:** with `AGENT_ATTACH=none` (default) the
+  launching terminal is never taken over — `print_session_attach_hints` (in
+  `_common.sh`) prints `tmux attach -t "$TERM_SESSION"` **and**
+  `tmux attach -t "$AGENT_SESSION"` (or `tmux switch-client` when you are already
+  inside tmux) plus the `Ctrl-b d` reminder, and start.sh returns to your shell.
+  `AGENT_ATTACH=current` takes the terminal over instead with
+  `exec tmux attach`/`switch-client` on the agent.
 - Re-running is safe: existing sessions are reused rather than duplicated (and
-  the kickoff is only sent when the agent session is newly created).
+  the kickoff — and its ready-wait — only runs when the agent session is newly
+  created).
 
 ### Step 5 — Working in `term`
 
@@ -222,7 +278,7 @@ prompt prefix, and extracts those comment lines as instructions.
 
 The poke keyword is `ping`: receiving exactly `ping` tells the agent to run
 `read.sh` + `requests.sh` and refresh its status rather than treat the word as a
-task (defined in [`.agents/agent-prompt.md`](.agents/agent-prompt.md)).
+task (defined in [`tmux-agents/agent-prompt.md`](tmux-agents/agent-prompt.md) and `tmux-agents/rules/`).
 
 **Auto-ping.** When `AGENT_AUTOPING=1` (default), the pane watcher
 [`scripts/term-watch.sh`](scripts/term-watch.sh) matches each (ANSI-stripped)
@@ -233,12 +289,13 @@ Because detection reads the pane output — not the shell's history/hooks — it
 Both sessions share one tmux server, so the watcher drives the agent directly;
 no session linking required.
 
-Before matching, the watcher strips the agent's own `send.sh` markers (`#AT#` up
-to the next `#`) from the line rather than discarding the whole line. This keeps
-the agent from pinging itself while still detecting a **human comment that an
-interactive REPL merged onto the same line as a marker** (IPython redraws its
-prompt, so a marker and your next `# comment` can share one streamed line — you
-should never have to type a comment twice).
+Before matching, the watcher strips the agent's own `send.sh` markers (`SEND_MARKER`,
+default `: AT:`, up to the next `#`) from the line rather than discarding the
+whole line. This keeps the agent from pinging itself while still detecting a
+**human comment that an interactive REPL merged onto the same line as a marker**
+(IPython redraws its prompt, so a marker and your next `# comment` can share one
+streamed line — you should never have to type a comment twice). Markers
+deliberately avoid `#` so they never match the auto-ping trigger regex.
 
 Matches are de-duplicated (identical consecutive lines) **and rate-limited** by
 `PING_MIN_INTERVAL` seconds (default `AGENT_SUBMIT_DELAY` + 2). The rate limit
@@ -251,7 +308,7 @@ lossless: a single `ping` already makes the agent re-read **all** pending
 comments via `requests.sh`.
 
 The trigger regex is loaded from `PING_TRIGGER_FILE`
-([`.agents/ping-trigger.regex`](.agents/ping-trigger.regex)) — its first
+([`tmux-agents/ping-trigger.regex`](tmux-agents/ping-trigger.regex)) — its first
 non-`##`, non-blank line, matched with `grep -E` (POSIX ERE). Since matching is
 on the pane's visible output, patterns are prompt-anchored to avoid false pings.
 The default is `(^|[^[:alnum:][:space:]][[:space:]]+)#([[:space:]]|$)` — a `#`
@@ -267,27 +324,60 @@ On a poke, `requests.sh` returns every **unprocessed** comment (in order) and
 records how many it has handled in a state file
 (`$TMPDIR/agentic_terminal_<term>_last_comment`), so the same comment is never
 resurfaced. The agent turns each comment into work and runs it via
-[`scripts/send.sh`](scripts/send.sh), which is **shell-agnostic** — it never
-runs shell builtins in `term`, it only *types* lines with `tmux send-keys`:
+[`scripts/send.sh`](scripts/send.sh), which types lines with `tmux send-keys`:
 
-- types a `#AT#` comment carrying the agent identifier + a unique begin marker,
+- types a `: AT:` marker line (bash/zsh no-op; not a `#` comment) carrying the
+  agent identifier + a unique begin marker,
 - types your command verbatim,
-- types a `#AT#` comment with a done marker (a comment is a no-op in bash,
-  python, IPython, …, so nothing breaks in non-bash REPLs),
+- types a `: AT:` done marker,
 - polls `capture-pane -J` until the done marker appears, then prints everything
   between the two markers (the command echo and its output).
 
-Using comment markers (instead of `printf`/`{ …; }`/`$?`) is what lets the agent
-tell *its* output apart from yours and know when a command finished, while
-working in any REPL. Because markers are plain comments, there is no numeric exit
-code. The `#AT#` sentinel is also what `term-watch.sh` and `requests.sh` use to
-skip the agent's own lines so it never pings itself.
+Using `: AT:` markers (instead of `#` comments or shell builtins like `printf`/
+`{ …; }`/`$?`) lets the agent tell *its* output apart from yours, know when a
+command finished, and avoid tripping auto-ping. There is no numeric exit code.
+The `SEND_MARKER` prefix is also what `term-watch.sh` and `requests.sh` use to
+skip the agent's own lines.
 
 ### Step 8 — `scripts/stop.sh`
 
 Sends `Ctrl-C` then `Ctrl-D` to each session so the agent CLI can exit cleanly,
 kills both tmux sessions with `tmux kill-session`, and removes the
 comment-tracking state file.
+
+### Recovering auto-ping (`scripts/watch.sh`)
+
+Auto-ping depends on the `tmux pipe-pane` watcher staying attached to `term`. If
+it drops (the pipe gets toggled off, or the watcher process dies), `term` keeps
+working but comments stop poking the agent. Since `start.sh` only wires the
+watcher when it *creates* `term`, use `watch.sh` to inspect and repair a live
+session — you can run it straight from the `term` window:
+
+```bash
+make watch-status     # HEALTHY or BROKEN? (pipe state, agent-session liveness, watcher PIDs, log age)
+make reload-watcher   # re-attach the watcher AND verify the whole ping chain
+make ping-selftest    # prove a '# comment' is detected and pings the agent (non-disruptive)
+make stop-watcher     # detach it (auto-ping off)
+```
+
+`make reload-watcher` is the one-shot "fix + prove it" button. It:
+
+1. **Idempotently re-attaches** the pipe — it first *closes* any existing pipe,
+   then opens a fresh one, so reloading a **healthy** watcher can never toggle it
+   off (an earlier `pipe-pane -o` bug did exactly that and silently killed
+   auto-ping after a reload). It also reaps stray watchers so exactly one runs,
+   starts a fresh transcript, and repoints `logs/<agent>.current.log`.
+2. **Verifies the full chain** and prints `[PASS]`/`[FAIL]` for each link: pipe
+   attached, one watcher running, the **agent session alive** (a missing agent
+   session is a silent ping sink — the watcher looks healthy but `send-keys` goes
+   nowhere), and a **self-test** that runs a canonical `# comment` through a
+   throwaway watcher aimed at a scratch session to confirm detection + delivery.
+
+If everything passes it prints `auto-ping VERIFIED working` plus a reminder that
+a prompt must be a **clean comment line** (`# do the thing`, with a space after
+`#`) — a `#` glued onto a command (`ls# ...`) is treated as program output and
+deliberately ignored. Re-running `make start` also self-heals a broken watcher,
+and a manual `ping` in the agent chat works even while the watcher is down.
 
 ---
 
@@ -297,13 +387,24 @@ comment-tracking state file.
 |---|---|
 | `run.sh` | Entrypoint: verify environment, then launch (setup + start). |
 | `scripts/setup.sh` | Verify prerequisites and make the toolkit executable. |
-| `scripts/start.sh` | Create both sessions, open `term`, start the agent detached. |
+| `scripts/start.sh` | Create both sessions, prompt the detached agent, count down, then open `term` and print how to reach the agent (self-heals a broken watcher on reuse). |
 | `scripts/send.sh` | Run a command in `term` and capture its output. |
 | `scripts/read.sh` | Snapshot the `term` pane (context). |
 | `scripts/requests.sh` | Collect unprocessed `#` comment-prompts. |
+| `scripts/watch.sh` | Diagnose/repair+verify/self-test the pane watcher (`status`/`reload`/`selftest`/`stop`) when auto-ping breaks. |
 | `scripts/term-watch.sh` | Pane watcher: logs the transcript and auto-pings the agent on a match. |
 | `scripts/stop.sh` | Tear everything down. |
 | `scripts/config.sh` | Configuration (agent, sessions, prefix, terminal). |
-| `scripts/_common.sh` | Shared helpers. |
+| `scripts/_common.sh` | Shared helpers (incl. `attach_watcher`). |
+
+### Agent capabilities: `tmux-agents/`
+
+The tmux agent's capabilities live in [`tmux-agents/`](tmux-agents/README.md):
+`agent-prompt.md` (role), `rules/` (rules loaded + followed on start), `skills/`,
+`hooks/`, and `ping-trigger.regex`. On `make start` the agent is told to read the
+prompt **and every rule in `rules/`**, so adding a rule there needs no code
+change. Put any new tmux-agent capability here (not in `.cursor/`, which is for
+Cursor-IDE-native skills) — see
+[`tmux-agents/rules/capabilities-location.md`](tmux-agents/rules/capabilities-location.md).
 
 See [`README.md`](README.md) for the full configuration table and roadmap.

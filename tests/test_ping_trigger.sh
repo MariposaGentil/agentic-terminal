@@ -4,7 +4,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/_helpers.sh"
 
 WATCH="$REPO_ROOT/scripts/term-watch.sh"
-DEFAULT_RE="$REPO_ROOT/.agents/ping-trigger.regex"
+DEFAULT_RE="$REPO_ROOT/tmux-agents/ping-trigger.regex"
 
 STUB_LOG=""
 TRANS=""
@@ -21,7 +21,7 @@ run_watch() {
     # PING_MIN_INTERVAL defaults to 0 here so these tests can count one ping per
     # matching line; the rate-limit behavior is covered by its own test below.
     printf '%s\n' "$@" | PATH="$BIN:$PATH" \
-        AGENT_SESSION=agent AGENT_SUBMIT_DELAY=0 AGENT_AUTOPING="$autoping" \
+        AGENT_SESSION=agent TERM_SESSION=term AGENT_SUBMIT_DELAY=0 AGENT_AUTOPING="$autoping" \
         COMMENT_PREFIX='#' PING_TRIGGER_FILE="$regex_file" \
         PING_MIN_INTERVAL="${PING_MIN_INTERVAL_OVERRIDE:-0}" \
         bash "$WATCH" "$TRANS"
@@ -61,27 +61,55 @@ assert_contains "$(cat "$TRANS")" "# should not ping" "autoping=0: transcript st
 run_watch "$DEFAULT_RE" 1 'u$ # first' 'u$ echo x' 'u$ # second'
 assert_eq "2" "$(pings)" "two distinct comments produce two pings"
 
-# 6) The agent's own '#AT#' marker lines must NOT trigger a ping (no self-ping).
+# 6) The agent's own send.sh marker lines must NOT trigger a ping (no self-ping).
 run_watch "$DEFAULT_RE" 1 \
-    'u$ #AT# BEGIN 12345 session:[abc]' \
+    'u$ : AT: BEGIN 12345 session:[abc]' \
     'u$ echo hello' \
-    'u$ #AT# DONE 12345'
-assert_eq "0" "$(pings)" "agent's own #AT# lines do not self-ping"
+    'u$ : AT: DONE 12345'
+assert_eq "0" "$(pings)" "agent's own : AT: lines do not self-ping"
 
 # 6b) A HUMAN comment merged onto the same line as a marker (as happens when an
 #     IPython prompt redraws) MUST still ping — the marker is stripped, not the
 #     whole line. Regression for "had to type the comment twice".
 run_watch "$DEFAULT_RE" 1 \
-    'In [27]: #AT# DONE 748099051 leftover textIn [27]: # print it here'
+    'In [27]: : AT: DONE 748099051 leftover textIn [27]: # print it here'
 assert_eq "1" "$(pings)" "human comment merged with a marker still pings"
 
 # 6c) A marker with trailing garbage but NO human comment must NOT ping.
 run_watch "$DEFAULT_RE" 1 \
-    'In [31]: #AT# DONE 7611624447In [31]: #AT# DONE 7611624447'
+    'In [31]: : AT: DONE 7611624447In [31]: : AT: DONE 7611624447'
 assert_eq "0" "$(pings)" "marker-only line (even mangled) does not ping"
+
+# 6d) Welcome-style `:` lines (not `#` comments) must not trigger auto-ping.
+run_watch "$DEFAULT_RE" 1 \
+    'u$ : ── agentic-terminal ──' \
+    'u$ : Detach (leave running):  Ctrl-b  then  d'
+assert_eq "0" "$(pings)" "welcome banner : lines do not auto-ping"
+
+# 6e) REPL-style `# AT:` markers (Python/IPython) must not self-ping.
+run_watch "$DEFAULT_RE" 1 \
+    '>>> # AT: BEGIN 12345 session:[abc]' \
+    '>>> print(1)' \
+    '>>> # AT: DONE 12345'
+assert_eq "0" "$(pings)" "agent's own # AT: REPL markers do not self-ping"
 
 # 7) Rate-limit: a burst of matches within PING_MIN_INTERVAL collapses to ONE
 #    ping. This is what prevents the agent receiving a merged "pingping".
 PING_MIN_INTERVAL_OVERRIDE=60 run_watch "$DEFAULT_RE" 1 \
     'u$ # first' 'u$ # second' 'u$ # third'
 assert_eq "1" "$(pings)" "rate-limit collapses a burst of pings into one (no pingping)"
+
+# 7b) Ping ack: a tmux status message is shown in term when a ping is sent.
+run_watch "$DEFAULT_RE" 1 'u$ # ack test'
+assert_contains "$(cat "$STUB_LOG")" "display-message" "ping ack: flashes status in term"
+
+# 8) Shared regex loader (used by term-watch.sh AND watch.sh) is consistent.
+source "$REPO_ROOT/scripts/_ping_regex.sh"
+DEF_RE="$(load_ping_regex '#' '')"                        # no file -> built-in default
+matches() { printf '%s' "$1" | grep -qE -- "$DEF_RE" && echo yes || echo no; }
+assert_eq "yes" "$(matches 'erik@h:~$ # do it')" "loader default matches a shell-prompt comment"
+assert_eq "no"  "$(matches 'ls -la')"            "loader default ignores a normal command"
+assert_eq "no"  "$(matches 'watch-status# glued')" "loader default ignores a '#' glued to a word"
+FILE_RE="$(load_ping_regex '#' "$DEFAULT_RE")"           # from the repo regex file
+assert_eq "$(cat "$DEFAULT_RE" | grep -vE '^[[:space:]]*(##|$)' | head -n1)" "$FILE_RE" \
+    "loader uses the first active line of the trigger file"

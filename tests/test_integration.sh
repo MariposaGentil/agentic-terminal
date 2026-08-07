@@ -12,9 +12,11 @@ TERM_A="ci_term_$$"
 AGENT_A="ci_agent_$$"
 TERM_B="ci_send_$$"
 TERM_PY="ci_py_$$"
+TERM_W="ci_watch_$$"
+AGENT_W="ci_wagent_$$"
 
 cleanup_sessions() {
-    for s in "$TERM_A" "$AGENT_A" "$TERM_B" "$TERM_PY"; do
+    for s in "$TERM_A" "$AGENT_A" "$TERM_B" "$TERM_PY" "$TERM_W" "$AGENT_W"; do
         tmux kill-session -t "$s" 2>/dev/null
     done
 }
@@ -35,7 +37,7 @@ sleep 0.4
 
 watch_log="$TMP/term_watch.log"
 tmux pipe-pane -o -t "$TERM_A" \
-    "AGENT_SESSION='$AGENT_A' AGENT_SUBMIT_DELAY=0 AGENT_AUTOPING=1 COMMENT_PREFIX='#' PING_TRIGGER_FILE='$REPO_ROOT/.agents/ping-trigger.regex' exec '$REPO_ROOT/scripts/term-watch.sh' '$watch_log'"
+    "AGENT_SESSION='$AGENT_A' AGENT_SUBMIT_DELAY=0 AGENT_AUTOPING=1 COMMENT_PREFIX='#' PING_TRIGGER_FILE='$REPO_ROOT/tmux-agents/ping-trigger.regex' exec '$REPO_ROOT/scripts/term-watch.sh' '$watch_log'"
 sleep 0.4
 
 tmux send-keys -t "$TERM_A" "# please do the thing" Enter
@@ -76,4 +78,72 @@ if command -v python3 >/dev/null 2>&1; then
     assert_contains "$outp" "42" "send.sh: works in a python3 REPL (shell-agnostic)"
 else
     skip "send.sh python3 REPL test" "python3 not installed"
+fi
+
+# ---------------------------------------------------------------------------
+# D) watch.sh can DIAGNOSE and REPAIR a broken watcher. Uses scratch sessions
+#    and a temp logs dir so it never touches the real agent/term or repo logs.
+# ---------------------------------------------------------------------------
+w_in="$TMP/wagent_in.txt"; : > "$w_in"
+tmux new-session -d -s "$AGENT_W" "bash -c 'cat >> \"$w_in\"'"
+tmux new-session -d -s "$TERM_W" "bash --norc --noprofile"
+tmux send-keys -t "$TERM_W" "PS1='W\$ '" Enter
+sleep 0.4
+
+# Common env so watch.sh targets the scratch sessions + temp logs.
+wenv=(AGENT_SESSION="$AGENT_W" TERM_SESSION="$TERM_W" LOGS_DIR="$TMP/wlogs"
+      PING_MIN_INTERVAL=0 AGENT_SUBMIT_DELAY=0
+      PING_TRIGGER_FILE="$REPO_ROOT/tmux-agents/ping-trigger.regex")
+
+env "${wenv[@]}" bash "$REPO_ROOT/scripts/watch.sh" reload >/dev/null
+assert_eq "1" "$(tmux display-message -pt "$TERM_W" -p '#{pane_pipe}')" \
+    "watch.sh reload: attaches the pipe"
+
+st_ok="$(env "${wenv[@]}" bash "$REPO_ROOT/scripts/watch.sh" status || true)"
+assert_contains "$st_ok" "HEALTHY" "watch.sh status: reports HEALTHY when piped"
+
+# Auto-ping works after reload.
+tmux send-keys -t "$TERM_W" "# please ping now" Enter
+w_ping=0
+for _ in $(seq 1 40); do
+    grep -q "ping" "$w_in" 2>/dev/null && { w_ping=1; break; }
+    sleep 0.2
+done
+assert_eq "1" "$w_ping" "watch.sh reload: auto-ping works again after repair"
+
+# Break the pipe and confirm status detects it.
+tmux pipe-pane -t "$TERM_W"; sleep 0.3
+st_bad="$(env "${wenv[@]}" bash "$REPO_ROOT/scripts/watch.sh" status || true)"
+assert_contains "$st_bad" "BROKEN" "watch.sh status: detects a broken pipe"
+
+# Repair again.
+env "${wenv[@]}" bash "$REPO_ROOT/scripts/watch.sh" reload >/dev/null
+assert_eq "1" "$(tmux display-message -pt "$TERM_W" -p '#{pane_pipe}')" \
+    "watch.sh reload: repairs a broken pipe"
+
+# Regression: reloading an ALREADY-attached watcher must NOT toggle the pipe off.
+# (`pipe-pane -o` used to toggle, silently killing auto-ping after a reload.)
+env "${wenv[@]}" bash "$REPO_ROOT/scripts/watch.sh" reload >/dev/null 2>&1
+assert_eq "1" "$(tmux display-message -pt "$TERM_W" -p '#{pane_pipe}')" \
+    "watch.sh reload: reloading a healthy watcher stays attached (no -o toggle)"
+
+# Non-disruptive self-test proves detection+delivery (uses its own scratch agent).
+if env "${wenv[@]}" bash "$REPO_ROOT/scripts/watch.sh" selftest >/dev/null 2>&1; then
+    assert_eq "ok" "ok" "watch.sh selftest: passes (comment -> ping)"
+else
+    assert_eq "pass" "fail" "watch.sh selftest: passes (comment -> ping)"
+fi
+
+# reload verifies the whole chain and reports VERIFIED when the agent is alive.
+rel="$(env "${wenv[@]}" bash "$REPO_ROOT/scripts/watch.sh" reload 2>&1 || true)"
+assert_contains "$rel" "VERIFIED working" "watch.sh reload: verifies the full ping chain"
+
+# If the AGENT session is missing, status/reload must FLAG it (silent ping sink).
+tmux kill-session -t "$AGENT_W" 2>/dev/null
+st_noagent="$(env "${wenv[@]}" bash "$REPO_ROOT/scripts/watch.sh" status 2>&1 || true)"
+assert_contains "$st_noagent" "MISSING" "watch.sh status: flags a missing agent session"
+if env "${wenv[@]}" bash "$REPO_ROOT/scripts/watch.sh" reload >/dev/null 2>&1; then
+    assert_eq "should-fail" "ok" "watch.sh reload: fails when agent session is missing"
+else
+    assert_eq "ok" "ok" "watch.sh reload: fails when agent session is missing"
 fi

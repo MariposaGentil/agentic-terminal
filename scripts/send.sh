@@ -2,16 +2,16 @@
 # Send a command (read from stdin) to the interactive `term` session and print
 # its output. Blocks until the command finishes.
 #
-# SHELL-AGNOSTIC: this does NOT wrap the command in any shell builtins. It only
-# TYPES lines into term with `tmux send-keys`, using COMMENT lines as markers.
-# A line starting with '#' is a no-op in bash, python, IPython, etc., so the
-# very same mechanism works across shells (no `printf`, no `{ ...; }`, no `$?`).
+# SHELL-AGNOSTIC for the command itself: this does NOT wrap the command in any
+# shell builtins. It only TYPES lines into term with `tmux send-keys`.
 #
-# Markers use the '#AT#' sentinel so the auto-ping watcher (term-watch.sh) and
-# requests.sh ignore them — the agent never pings itself or treats its own
-# commands as prompts. The agent identifier is typed as part of the marker.
+# Markers use SEND_MARKER (default `: AT:`) — a leading `:` is a no-op in
+# bash/zsh and deliberately does NOT use COMMENT_PREFIX (`#`), so auto-ping
+# never fires on the agent's own begin/done lines. term-watch.sh and
+# requests.sh strip/ignore these markers.
 #
-# Because it stays shell-agnostic, it does NOT report a numeric exit code.
+# Because it stays shell-agnostic for the command body, it does NOT report a
+# numeric exit code.
 #
 # State persists: commands run in the same live shell/REPL, so variables, cwd,
 # and imports set by one call are visible to the next.
@@ -35,8 +35,22 @@ fi
 
 # Keep run_id short so the marker line is unlikely to line-wrap in the pane.
 run_id="$$${RANDOM}"
-begin="#AT# BEGIN ${run_id} session:[${agent_id}]"
-done_marker="#AT# DONE ${run_id}"
+
+# Pick a marker prefix valid for the active interpreter (: no-op in bash/zsh;
+# # comment in Python/IPython). Auto-ping strips both forms before matching.
+pick_send_marker() {
+    local tail
+    # Last non-empty line is the active prompt (pane tail is often blank lines).
+    tail="$(tmux capture-pane -pt "$TERM_SESSION" -S -100 2>/dev/null | awk 'NF{p=$0} END{print p}')" || true
+    if printf '%s' "$tail" | grep -qE '^>>>[[:space:]]*$|^In \[[0-9]+\]:[[:space:]]*$'; then
+        printf '%s' "${SEND_MARKER_REPL:-# AT:}"
+    else
+        printf '%s' "${SEND_MARKER:-: AT:}"
+    fi
+}
+marker="$(pick_send_marker)"
+begin="${marker} BEGIN ${run_id} session:[${agent_id}]"
+done_marker="${marker} DONE ${run_id}"
 
 # Type one line, then submit it with a separate Enter keystroke.
 send_line() {
@@ -44,7 +58,7 @@ send_line() {
     tmux send-keys -t "$TERM_SESSION" Enter
 }
 
-# 1) Attribution + begin marker (a comment: no-op in every shell).
+# 1) Attribution + begin marker (a `:` no-op line in bash/zsh).
 send_line "$begin"
 # 2) The command itself, typed verbatim.
 send_line "$cmd"
