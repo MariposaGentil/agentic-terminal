@@ -1,0 +1,38 @@
+## Ping trigger pattern for scripts/term-watch.sh (POSIX ERE, matched with grep -E).
+##
+## The FIRST line below that does not start with '##' (and is not blank) is used
+## as the regex. term-watch.sh matches it against each (ANSI-stripped) line shown
+## in `term`. When a line matches, the watcher sends `ping` to the agent session.
+##
+## Because matching is done on the pane's visible output, patterns should be
+## anchored to a prompt so ordinary command output does not trigger false pings.
+## Lines starting with '##' are comments; blank lines are ignored (so the actual
+## pattern may begin with a single '#').
+##
+## --- Default: a comment typed at ANY prompt. A prompt ends in a SYMBOL (a
+##     non-alphanumeric, non-space char: '$', '>', '%', ']', or a powerline
+##     glyph), so we match '#' when it follows such a symbol + space, or starts
+##     the line. This is prompt-agnostic (plain AND themed/powerline prompts) yet
+##     ignores mid-output hashes, whose '#' follows a WORD (e.g. "items # ...").
+## example (matches):     erik@host:~/proj$ # run the tests
+## example (matches):      main  # deploy    (powerline prompt: glyph + space + #)
+## example (matches):     # deploy to staging
+## example (no match):    ls -la
+## example (no match):    total 0 items # trailing hash in program output
+## example (no match):    echo "pass#123"   (no space before '#')
+(^|[^[:alnum:][:space:]][[:space:]]+)#([[:space:]]|$)
+##
+## --- Stricter: only a comment right after a classic prompt char ($, #, >, ]).
+##     Use this if your prompt ends in one of those and you want the old behavior.
+## example (matches):     erik@host:~/proj$ # run the tests
+## (^|[]$#>][[:space:]]+)#
+##
+## --- Example for an IPython-based term (In [n]: prompt followed by a #comment):
+## example (matches):     In [3]: # summarize the failures
+## example (no match):    In [4]: x = 1
+## ^In \[[0-9]+\]:[[:space:]]*#
+##
+## --- Example: trigger only on a double-hash marker.
+## example (matches):     erik@host:~/proj$ ## ask the agent
+## example (no match):    erik@host:~/proj$ # ordinary comment
+## (^|[[:space:]])##

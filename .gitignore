@@ -1,0 +1,4 @@
+# Session transcripts: keep the folder, ignore everything inside it except the
+# .gitkeep placeholder.
+/logs/*
+!/logs/.gitkeep
