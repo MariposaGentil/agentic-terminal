@@ -33,9 +33,11 @@
 : "${AGENT_SESSION:=agent}"
 # Name of the interactive terminal session the human works in.
 : "${TERM_SESSION:=term}"
-# Initial working directory for `term` when start.sh creates the session.
-# Defaults to the repo root when unset.
-: "${TERM_CWD:=}"
+# Shared initial working directory for `term` and `agent` when start.sh creates
+# the sessions. Defaults to $PWD (where make start / run.sh / atstart was invoked).
+# TERM_CWD is a legacy alias for SESSION_CWD.
+: "${SESSION_CWD:=${TERM_CWD:-}}"
+: "${TERM_CWD:=${SESSION_CWD:-}}"
 
 # --- Agent capabilities ------------------------------------------------------
 # Home of the tmux agent's capabilities (rules, skills, hooks, prompt, trigger).
@@ -46,6 +48,10 @@
 # the agent is told to read agent-prompt.md AND every file in here, then obey
 # them, so dropping a new rule file here takes effect on the next `make start`.
 : "${AGENT_RULES_DIR:=${AGENT_CAPS_DIR}/rules}"
+# Optional project overlay: rules/skills for the repo the sessions run in (e.g.
+# qapi-client/tmux-agents). When empty, start.sh auto-sets this from
+# $SESSION_CWD/tmux-agents when that directory exists.
+: "${AGENT_PROJECT_CAPS_DIR:=}"
 
 # --- Agent bootstrap ---------------------------------------------------------
 # When the agent session starts, it needs to be told its role: that it drives
@@ -67,7 +73,7 @@
 : "${AGENT_SUBMIT_DELAY:=1}"
 # One-line kickoff typed into the agent; points it at the prompt file AND the
 # rules directory so all capabilities load on start.
-: "${AGENT_BOOTSTRAP:=Read ${AGENT_PROMPT_FILE} and every file in ${AGENT_RULES_DIR}/, then follow them. You are the agent driving the '${TERM_SESSION}' tmux session via the scripts/ toolkit. Start by running scripts/read.sh and scripts/requests.sh.}"
+: "${AGENT_BOOTSTRAP:=Read \$AGENTIC_TERMINAL_ROOT/${AGENT_PROMPT_FILE} and every file in \$AGENTIC_TERMINAL_ROOT/${AGENT_RULES_DIR}/, then follow them. You are the agent driving the '${TERM_SESSION}' tmux session. Your shell cwd is \$SESSION_CWD (same as term). Run the toolkit via \$AGENTIC_TERMINAL_ROOT/scripts/ — start with \$AGENTIC_TERMINAL_ROOT/scripts/read.sh and \$AGENTIC_TERMINAL_ROOT/scripts/requests.sh.}"
 
 # --- Comment-as-prompt -------------------------------------------------------
 # Lines typed in `term` starting with this prefix are treated as prompts for the
@@ -104,6 +110,13 @@
 # How long (ms) the status message stays visible in `term`.
 : "${PING_ACK_MS:=3000}"
 
+# --- Agent status bar (in `term`) --------------------------------------------
+# Persistent tmux status-right on the `term` session showing whether the agent
+# is busy / free / waiting to deliver a queued ping / offline. 1 = on, 0 = off.
+: "${AGENT_STATUS_BAR:=1}"
+# How often (seconds) tmux refreshes the status bar (and re-runs agent-status.sh).
+: "${AGENT_STATUS_INTERVAL:=1}"
+
 # --- Session logging ---------------------------------------------------------
 # Directory (repo-relative) where per-session `term` transcripts are written.
 # Each start creates a file named <TERM_SESSION>-<YYYYmmdd-HHMMSS>.log capturing
@@ -111,6 +124,16 @@
 : "${LOGS_DIR:=logs}"
 # On start, session logs older than this many days are deleted.
 : "${LOG_RETENTION_DAYS:=7}"
+
+# --- Term shell (optional bash rc) -------------------------------------------
+# When the file exists, `term` is started as `bash --rcfile <path> -i` so you
+# can add aliases and functions that exist only in that tmux session (not in
+# `agent` or your regular terminal). Set to 0 or none to disable. The default
+# path is checked first; if missing, $SESSION_CWD/tmux-agents/term.bashrc is
+# used when present (project overlay). Copy tmux-agents/term.bashrc.example to
+# tmux-agents/term.bashrc (or add one under your project's tmux-agents/) to
+# enable.
+: "${TERM_BASHRC:=${AGENT_CAPS_DIR}/term.bashrc}"
 
 # --- Attaching to the sessions ----------------------------------------------
 # There is no fixed countdown: start.sh kicks off the agent first and then BLOCKS
@@ -135,19 +158,22 @@
 #   none     - don't open a window; just print the manual attach command.
 : "${TERM_ATTACH:=emulator}"
 # How the launching terminal attaches to the `agent` session:
-#   none     - don't attach (default). The agent runs detached and the terminal
-#              that ran start is left alone at its own prompt; start.sh prints
-#              the command to attach whenever you want to watch it.
-#   current  - attach in the same terminal that ran start, taking it over. Uses
-#              tmux switch-client if already inside tmux.
-: "${AGENT_ATTACH:=none}"
+#   current  - attach in the same terminal that ran start, taking it over
+#              (default). Uses tmux switch-client if already inside tmux. Falls
+#              back to printing the attach command when there is no TTY.
+#   none     - don't attach. The agent runs detached and the terminal that ran
+#              start is left alone at its own prompt; start.sh prints the
+#              command to attach whenever you want to watch it.
+: "${AGENT_ATTACH:=current}"
 # Used when TERM_ATTACH=emulator. On most Linux desktops `x-terminal-emulator`
 # points at the user's default terminal. Invoked as:
 #   $TERMINAL_EMULATOR -e tmux attach -t <TERM_SESSION>
 : "${TERMINAL_EMULATOR:=x-terminal-emulator}"
 
-export AGENT_CMD AGENT_MODEL AGENT_ARGS AGENT_SESSION TERM_SESSION TERM_CWD COMMENT_PREFIX SEND_MARKER SEND_MARKER_REPL AGENT_AUTOPING PING_TRIGGER_FILE PING_MIN_INTERVAL PING_ACK PING_ACK_MS
+export AGENT_CMD AGENT_MODEL AGENT_ARGS AGENT_SESSION TERM_SESSION SESSION_CWD TERM_CWD COMMENT_PREFIX SEND_MARKER SEND_MARKER_REPL AGENT_AUTOPING PING_TRIGGER_FILE PING_MIN_INTERVAL PING_ACK PING_ACK_MS
+export AGENT_STATUS_BAR AGENT_STATUS_INTERVAL
 export TERM_ATTACH AGENT_ATTACH TERMINAL_EMULATOR AGENT_PROMPT_WAIT AGENT_IDLE_STABLE
 export LOGS_DIR LOG_RETENTION_DAYS
-export AGENT_CAPS_DIR AGENT_RULES_DIR
+export AGENT_CAPS_DIR AGENT_RULES_DIR AGENT_PROJECT_CAPS_DIR
 export AGENT_PROMPT_FILE AGENT_PROMPT_MODE AGENT_READY_WAIT AGENT_SUBMIT_DELAY AGENT_BOOTSTRAP
+export TERM_BASHRC

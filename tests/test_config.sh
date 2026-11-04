@@ -21,6 +21,8 @@ eval "$(env -i bash -c "source '$REPO_ROOT/scripts/config.sh' >/dev/null 2>&1; \
     printf 'D_AGENT_IDLE_STABLE=%q\n' \"\$AGENT_IDLE_STABLE\"; \
     printf 'D_AGENT_READY_WAIT=%q\n' \"\$AGENT_READY_WAIT\"; \
     printf 'D_AGENT_SUBMIT_DELAY=%q\n' \"\$AGENT_SUBMIT_DELAY\"; \
+    printf 'D_AGENT_STATUS_BAR=%q\n' \"\$AGENT_STATUS_BAR\"; \
+    printf 'D_AGENT_STATUS_INTERVAL=%q\n' \"\$AGENT_STATUS_INTERVAL\"; \
     printf 'D_LOG_RETENTION_DAYS=%q\n' \"\$LOG_RETENTION_DAYS\"; \
     printf 'D_LOGS_DIR=%q\n' \"\$LOGS_DIR\"")"
 
@@ -39,12 +41,14 @@ assert_eq "tmux-agents" "$D_AGENT_CAPS_DIR" "default AGENT_CAPS_DIR is 'tmux-age
 assert_eq "tmux-agents/rules" "$D_AGENT_RULES_DIR" "default AGENT_RULES_DIR is 'tmux-agents/rules'"
 assert_eq "tmux-agents/agent-prompt.md" "$D_AGENT_PROMPT_FILE" "default AGENT_PROMPT_FILE path"
 assert_eq "emulator" "$D_TERM_ATTACH" "default TERM_ATTACH opens term in a new window"
-assert_eq "none" "$D_AGENT_ATTACH" "default AGENT_ATTACH leaves the launching terminal alone"
+assert_eq "current" "$D_AGENT_ATTACH" "default AGENT_ATTACH attaches the launching terminal to the agent"
 assert_eq "7" "$D_LOG_RETENTION_DAYS" "default log retention is 7 days"
 assert_eq "logs" "$D_LOGS_DIR" "default LOGS_DIR is 'logs'"
 assert_eq "90" "$D_AGENT_PROMPT_WAIT" "default AGENT_PROMPT_WAIT waits for the initial prompt"
 assert_eq "4" "$D_AGENT_IDLE_STABLE" "default AGENT_IDLE_STABLE marks idle after 4s unchanged"
 assert_eq "4" "$D_AGENT_READY_WAIT" "agent gets 4s to boot before the kickoff is typed"
+assert_eq "1" "$D_AGENT_STATUS_BAR" "agent status bar is on by default"
+assert_eq "1" "$D_AGENT_STATUS_INTERVAL" "status bar refreshes every 1s by default"
 
 # START_COUNTDOWN was removed: the agent-ready wait is the only blocking point.
 if grep -q 'START_COUNTDOWN' "$REPO_ROOT/scripts/config.sh"; then

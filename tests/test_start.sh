@@ -44,9 +44,9 @@ if command -v tmux >/dev/null 2>&1; then
         rm -rf "${REPO_ROOT:?}/$S_LOGS"
     }
     trap 'cleanup_start; _helpers_cleanup' EXIT
-    st_out="$(env -u AGENT_ATTACH -u TMUX \
+    st_out="$(env -u TMUX AGENT_ATTACH=none \
         TMPDIR="$TMP" TERM_SESSION="$S_TERM" AGENT_SESSION="$S_AGENT" \
-        LOGS_DIR="$S_LOGS" TERM_CWD="$TMP" AGENT_CMD=cat \
+        LOGS_DIR="$S_LOGS" SESSION_CWD="$TMP" AGENT_CMD=cat \
         AGENT_PROMPT_MODE=none TERM_ATTACH=none AGENT_AUTOPING=0 \
         timeout 30 bash "$REPO_ROOT/scripts/start.sh" 2>&1)"
     rc=$?
@@ -55,6 +55,19 @@ if command -v tmux >/dev/null 2>&1; then
     assert_contains "$st_out" "tmux attach -t $S_TERM" "start.sh: prints how to reach term"
     assert_not_contains "$st_out" "Attaching this terminal" "start.sh: does not take over the terminal"
     assert_not_contains "$st_out" "Switching this tmux client" "start.sh: does not hijack an outer tmux client"
+    cleanup_start
+
+    # Default (AGENT_ATTACH unset) attaches to the agent; without a TTY it falls
+    # back to printing the attach command instead of failing.
+    def_out="$(env -u AGENT_ATTACH -u TMUX \
+        TMPDIR="$TMP" TERM_SESSION="$S_TERM" AGENT_SESSION="$S_AGENT" \
+        LOGS_DIR="$S_LOGS" SESSION_CWD="$TMP" AGENT_CMD=cat \
+        AGENT_PROMPT_MODE=none TERM_ATTACH=none AGENT_AUTOPING=0 \
+        timeout 30 bash "$REPO_ROOT/scripts/start.sh" 2>&1 </dev/null)"
+    rc=$?
+    assert_eq "0" "$rc" "start.sh (default attach): exits cleanly without a TTY"
+    assert_contains "$def_out" "No interactive terminal; attach the agent manually" \
+        "start.sh (default attach): tries to attach the launching terminal to the agent"
     cleanup_start
 else
     skip "start.sh end-to-end" "tmux not installed"
@@ -98,7 +111,7 @@ fi
 # --- start.sh opens term only AFTER the agent-ready wait ----------------------
 # Source order matters: kickoff -> block on agent-ready -> open term. If term
 # opened before the wait it could appear while the agent is still booting.
-kick_line="$(grep -n 'send-keys -t "\$AGENT_SESSION" -l "\$AGENT_BOOTSTRAP"' "$REPO_ROOT/scripts/start.sh" | head -n1 | cut -d: -f1)"
+kick_line="$(grep -n 'send-keys -t "\$AGENT_SESSION" -l "\$kickoff"' "$REPO_ROOT/scripts/start.sh" | head -n1 | cut -d: -f1)"
 wait_line="$(grep -n 'wait_for_agent_prompt_done "\${AGENT_PROMPT_WAIT' "$REPO_ROOT/scripts/start.sh" | head -n1 | cut -d: -f1)"
 term_line="$(grep -n 'TERMINAL_EMULATOR%%' "$REPO_ROOT/scripts/start.sh" | head -n1 | cut -d: -f1)"
 if [ -n "$kick_line" ] && [ -n "$wait_line" ] && [ -n "$term_line" ] \

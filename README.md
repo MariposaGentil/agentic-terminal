@@ -58,7 +58,7 @@ In short: your terminal becomes the shared workspace, and the agent lives alongs
 ```
 
 1. `start.sh` prunes week-old session logs and creates the `term` tmux session with a transcript log (`tmux pipe-pane`).
-2. It creates the `agent` tmux session, starts the configured agent, and hands it a kickoff prompt pointing at [`tmux-agents/agent-prompt.md`](tmux-agents/agent-prompt.md) **and every rule in `tmux-agents/rules/`** so it loads its capabilities and knows to drive `term`. There is **no fixed countdown**: start **blocks until the agent has finished processing its initial prompt** and only then opens `term` in a **new terminal window** — so `term` never appears before the agent is ready. Both sessions stay **detached**; the terminal that ran start keeps its own shell and is told how to attach to either (`AGENT_ATTACH=current` to attach the agent instead).
+2. It creates the `agent` tmux session, starts the configured agent, and hands it a kickoff prompt pointing at [`tmux-agents/agent-prompt.md`](tmux-agents/agent-prompt.md) **and every rule in `tmux-agents/rules/`** so it loads its capabilities and knows to drive `term`. There is **no fixed countdown**: start **blocks until the agent has finished processing its initial prompt** and only then opens `term` in a **new terminal window** — so `term` never appears before the agent is ready. The terminal that ran start is then **attached to the `agent` session** (`AGENT_ATTACH=none` keeps it at its own shell and just prints how to attach to either session).
 3. The agent reads the `term` pane (via `tmux capture-pane`) to consume input and output — `read.sh`.
 4. The agent writes commands into `term` (via `tmux send-keys`) and captures their output — `send.sh`.
 5. Comment lines in `term` are collected as prompts — `requests.sh` — and a host-side `pipe-pane` watcher auto-pings the agent when a line matches the trigger regex — `term-watch.sh`.
@@ -72,6 +72,9 @@ The agent drives `term` through a small set of bash scripts in [`scripts/`](scri
 | `setup.sh` | Verify prerequisites (`tmux`, agent, terminal), mark the toolkit executable, optionally install deps. | `scripts/setup.sh [--install-deps]` |
 | `start.sh` | Create (or reuse) the `term` and `agent` tmux sessions, prompt the detached agent, block until the agent is ready, then open `term` in the default terminal. Both sessions stay detached and the launching terminal is untouched (it just prints how to attach to each). | `scripts/start.sh` |
 | `send.sh` | Type a command (from stdin) into `term` using `: AT:` no-op markers (not `#`, so auto-ping ignores them), block until it finishes, and print the captured output. | `echo 'ls -la' \| scripts/send.sh` |
+| `say.sh` | Show a visible status line in `term` via `echo`/`print` (never `#`, so auto-ping ignores it). | `scripts/say.sh 'Working on tests...'` |
+| `agent-status.sh` | Print agent busy/free/wait/offline for the `term` tmux status bar (`#(…)`). | `scripts/agent-status.sh` / `AGENT_STATUS_PLAIN=1 …` |
+| `log-snippet.sh` | Append copy-paste-ready text to the session log (`logs/agent.current.log`); not sent to `term`. | `scripts/log-snippet.sh --title 'step 1' <<'PY'` … `PY` |
 | `read.sh` | Print a raw snapshot of the `term` pane (with scrollback) so the agent can catch up on state. | `scripts/read.sh [lines]` |
 | `requests.sh` | Print all not-yet-processed comment-prompts typed in `term` (and mark them processed). Run on a "poke". | `scripts/requests.sh` |
 | `stop.sh` | Kill both tmux sessions cleanly. | `scripts/stop.sh` |
@@ -144,7 +147,9 @@ Optional: set your agent in [`scripts/config.sh`](scripts/config.sh) (default is
 
 **Stop everything:** `make stop`
 
-From anywhere on your machine you can also run `atstart` (if you installed the `~/bin/atstart.sh` helper) — same as `make run`, but **`term` opens in your current directory**.
+From anywhere on your machine you can also run **`atstart`** (install:
+`ln -sf "$(pwd)/scripts/atstart.sh" ~/bin/atstart`) — same as `make run`, but
+**`term` and `agent` both open in your current directory** (`$PWD`).
 
 ### Other `make` targets
 
@@ -168,7 +173,9 @@ Configuration lives in [`scripts/config.sh`](scripts/config.sh). Every value can
 | `AGENT_ARGS` | `--auto-review` | Extra args appended at launch so the agent doesn't stop for per-command approval. `--auto-review` auto-runs safe tool calls and prompts only for risky ones. Use `--force --trust` to run everything with no prompts, `--dangerously-skip-permissions` for Claude Code, or empty to require approvals. |
 | `AGENT_SESSION` | `agent` | tmux session name for the agent. |
 | `TERM_SESSION` | `term` | tmux session name for the interactive terminal. |
-| `TERM_CWD` | _(repo root)_ | Initial working directory for `term` when the session is first created. Set by `atstart` to your `$PWD`. |
+| `SESSION_CWD` | _(invocation `$PWD`)_ | Initial working directory for **both** `term` and `agent` when sessions are first created. Set automatically by `make start` / `run.sh` / `atstart`. |
+| `TERM_CWD` | _(same as `SESSION_CWD`)_ | Legacy alias for `SESSION_CWD`. |
+| `AGENTIC_TERMINAL_ROOT` | _(set in tmux on start)_ | Path to this repo; use `$AGENTIC_TERMINAL_ROOT/scripts/*` from a project cwd. |
 | `COMMENT_PREFIX` | `#` | Prefix that turns a typed line into a prompt. |
 | `SEND_MARKER` | `: AT:` | Prefix send.sh uses for begin/done markers in bash/zsh (must not use `#` or auto-ping fires). |
 | `SEND_MARKER_REPL` | `# AT:` | REPL variant for Python/IPython; stripped before auto-ping matching. |
@@ -178,10 +185,11 @@ Configuration lives in [`scripts/config.sh`](scripts/config.sh). Every value can
 | `AGENT_PROMPT_WAIT` | `90` | The blocking wait: max seconds `start.sh` waits for the agent to finish the initial prompt before opening `term` (reported when done; the agent keeps working regardless). Detected by pane stability. `0` skips the wait and opens `term` immediately. |
 | `AGENT_IDLE_STABLE` | `4` | Seconds the agent pane must stay unchanged to be considered done processing the initial prompt. |
 | `TERM_ATTACH` | `emulator` | How `start.sh` shows `term` once the agent is ready: `emulator` (open a new window) or `none`. |
-| `AGENT_ATTACH` | `none` | What happens to the launching terminal: `none` (default — agent stays detached, the terminal is left alone and start.sh prints how to attach) or `current` (take the terminal over with `tmux attach`/`switch-client`). |
+| `AGENT_ATTACH` | `current` | What happens to the launching terminal: `current` (default — take the terminal over with `tmux attach`/`switch-client` on the agent) or `none` (agent stays detached, the terminal is left alone and start.sh prints how to attach). |
 | `TERMINAL_EMULATOR` | `x-terminal-emulator` | Terminal used to open the `term` window when `TERM_ATTACH=emulator`. |
 | `AGENT_CAPS_DIR` | `tmux-agents` | Home of the agent's capabilities (prompt, rules, skills, hooks, trigger regex). |
 | `AGENT_RULES_DIR` | `tmux-agents/rules` | Rules the agent is told to read + follow on start (drop a file here to add one). |
+| `AGENT_PROJECT_CAPS_DIR` | _(auto from `$SESSION_CWD/tmux-agents`)_ | Optional project overlay when sessions run in another repo (e.g. qapi-client). |
 | `AGENT_PROMPT_FILE` | `tmux-agents/agent-prompt.md` | Instructions the agent reads on launch (its role + how to drive `term`). |
 | `AGENT_PROMPT_MODE` | `send-keys` | How to deliver the kickoff to the agent: `send-keys` or `none`. |
 | `AGENT_READY_WAIT` | `4` | Seconds to let the agent CLI boot (draw its TUI) before the kickoff is typed into the still-detached agent. Raise it if your CLI is slow to draw its TUI. |

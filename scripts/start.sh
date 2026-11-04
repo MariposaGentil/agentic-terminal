@@ -10,9 +10,9 @@
 # The agent is created and kicked off FIRST. There is no fixed countdown: start
 # blocks until the agent has finished processing its initial prompt (detected by
 # pane stability, capped at AGENT_PROMPT_WAIT), and only THEN opens `term` in a
-# new terminal window -- so `term` never appears before the agent is ready. Both
-# sessions stay DETACHED: the terminal that ran start keeps its own shell and is
-# told how to attach to either session (AGENT_ATTACH=current takes it over).
+# new terminal window -- so `term` never appears before the agent is ready. The
+# terminal that ran start is then attached to `agent` (AGENT_ATTACH=current,
+# default); AGENT_ATTACH=none leaves it at its own shell with attach hints.
 #
 # start.sh reuses existing sessions if they are already running, so it is safe
 # to call again.
@@ -25,6 +25,10 @@
 #   AGENT_CMD=claude start.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 require_tmux
+
+SESSION_CWD="$(resolve_session_cwd)"
+export SESSION_CWD TERM_CWD="$SESSION_CWD"
+echo "[agentic-terminal] Session working directory: $SESSION_CWD (toolkit: $REPO_ROOT)"
 
 # --- session logs: prune old ones --------------------------------------------
 logs_dir="$REPO_ROOT/$LOGS_DIR"
@@ -50,9 +54,18 @@ if tmux has-session -t "$TERM_SESSION" 2>/dev/null; then
         echo "[agentic-terminal] Watcher re-attached. Transcript: $WATCHER_LOG"
     fi
 else
-    term_cwd="${TERM_CWD:-$REPO_ROOT}"
-    echo "[agentic-terminal] Creating interactive session '$TERM_SESSION' (cwd: $term_cwd)..."
-    tmux new-session -d -s "$TERM_SESSION" -c "$term_cwd"
+    echo "[agentic-terminal] Creating interactive session '$TERM_SESSION' (cwd: $SESSION_CWD)..."
+    term_bashrc="$(resolve_term_bashrc_path)"
+    if [ -n "$term_bashrc" ]; then
+        echo "[agentic-terminal] Term shell: bash --rcfile '$term_bashrc'"
+        tmux new-session -d -s "$TERM_SESSION" -c "$SESSION_CWD" \
+            -e "AGENTIC_TERMINAL_ROOT=$REPO_ROOT" -e "SESSION_CWD=$SESSION_CWD" \
+            bash --rcfile "$term_bashrc" -i
+    else
+        tmux new-session -d -s "$TERM_SESSION" -c "$SESSION_CWD" \
+            -e "AGENTIC_TERMINAL_ROOT=$REPO_ROOT" -e "SESSION_CWD=$SESSION_CWD"
+    fi
+    set_session_env "$TERM_SESSION"
     # Fresh term -> forget which comment requests were already processed.
     rm -f "$COMMENT_STATE"
 
@@ -70,6 +83,9 @@ else
     show_term_welcome
     term_created=1
 fi
+
+# Agent busy/free indicator in the term status bar (also on reuse / repair).
+configure_term_status_bar
 
 # --- agent session (detached) + kickoff --------------------------------------
 agent_created=0
@@ -89,8 +105,10 @@ else
     if [ -n "${AGENT_ARGS:-}" ]; then
         agent_cmd="$agent_cmd $AGENT_ARGS"
     fi
-    echo "[agentic-terminal] Starting agent session '$AGENT_SESSION' (detached): $agent_cmd"
-    tmux new-session -d -s "$AGENT_SESSION" -c "$REPO_ROOT"
+    echo "[agentic-terminal] Starting agent session '$AGENT_SESSION' (detached, cwd: $SESSION_CWD): $agent_cmd"
+    tmux new-session -d -s "$AGENT_SESSION" -c "$SESSION_CWD" \
+        -e "AGENTIC_TERMINAL_ROOT=$REPO_ROOT" -e "SESSION_CWD=$SESSION_CWD"
+    set_session_env "$AGENT_SESSION"
     show_agent_welcome
     tmux send-keys -t "$AGENT_SESSION" -l "$agent_cmd"
     tmux send-keys -t "$AGENT_SESSION" Enter
@@ -112,6 +130,11 @@ else
             n_rules=0
             echo "[agentic-terminal] Warning: rules dir '$AGENT_RULES_DIR' not found; loading the prompt only." >&2
         fi
+        kickoff="$(build_agent_kickoff)"
+        if [ -n "${AGENT_PROJECT_CAPS_DIR:-}" ] && [ -d "$AGENT_PROJECT_CAPS_DIR/rules" ]; then
+            n_project_rules="$(find "$AGENT_PROJECT_CAPS_DIR/rules" -type f -name '*.md' 2>/dev/null | wc -l)"
+            echo "[agentic-terminal] Project overlay: ${AGENT_PROJECT_CAPS_DIR}/ (${n_project_rules} rule(s))."
+        fi
         # Step 1/3: give the CLI a moment to draw its TUI before we type at it.
         echo "[agentic-terminal] Step 1/3: initializing agent CLI '$AGENT_CMD' (waiting ${AGENT_READY_WAIT}s for it to boot)..."
         sleep "$AGENT_READY_WAIT"
@@ -119,7 +142,7 @@ else
         # a separate keystroke (sending them together often leaves the prompt typed
         # but not submitted).
         echo "[agentic-terminal] Step 2/3: loading initial prompt from '$AGENT_CAPS_DIR/' (agent-prompt.md + ${n_rules:-0} rule(s) in $AGENT_RULES_DIR/)..."
-        tmux send-keys -t "$AGENT_SESSION" -l "$AGENT_BOOTSTRAP"
+        tmux send-keys -t "$AGENT_SESSION" -l "$kickoff"
         sleep "$AGENT_SUBMIT_DELAY"
         tmux send-keys -t "$AGENT_SESSION" Enter
         kickoff_sent=1
@@ -159,9 +182,8 @@ case "$TERM_ATTACH" in
 esac
 
 # --- how to reach the sessions -----------------------------------------------
-# Prompt how to attach to BOTH sessions. agent stays DETACHED by default, so the
-# terminal that ran start keeps its own shell. AGENT_ATTACH=current takes this
-# terminal over (attach/switch) instead.
+# Prompt how to attach to BOTH sessions, then take this terminal over with the
+# agent (AGENT_ATTACH=current, default). AGENT_ATTACH=none keeps this shell.
 print_session_attach_hints
 case "$AGENT_ATTACH" in
     current)
@@ -177,6 +199,6 @@ case "$AGENT_ATTACH" in
         fi
         ;;
     *)
-        echo "[agentic-terminal] (Set AGENT_ATTACH=current to take this terminal over with the agent instead.)"
+        echo "[agentic-terminal] (Unset AGENT_ATTACH or set it to 'current' to take this terminal over with the agent.)"
         ;;
 esac
