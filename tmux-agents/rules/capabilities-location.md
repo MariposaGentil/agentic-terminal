@@ -37,7 +37,11 @@ the agent knows it exists.
 auto-discovers** for the human developer (e.g. `.cursor/skills/review`). That is
 a different audience and a different discovery mechanism. Capabilities meant for
 **this project's tmux agent**, loaded explicitly on `make start`, belong in
-`tmux-agents/` — not `.cursor/`.
+**agentic-terminal's** `tmux-agents/` — not `.cursor/`.
+
+**Project-specific** rules (qapi-client ProfileRules, Validate prompts, …)
+belong in **that repo's** `tmux-agents/`, loaded via `SESSION_CWD` /
+`AGENT_PROJECT_CAPS_DIR` (see `project-tmux-agents-overlay.md`).
 
 ## When adding or changing a capability
 

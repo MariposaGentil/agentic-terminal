@@ -27,6 +27,99 @@ require_tmux() {
     fi
 }
 
+# Working directory shared by `term` and `agent` when start.sh creates them.
+# Priority: SESSION_CWD > TERM_CWD (legacy alias) > $PWD at invocation > REPO_ROOT.
+resolve_session_cwd() {
+    local raw="${SESSION_CWD:-${TERM_CWD:-$PWD}}"
+    if [ -z "$raw" ] || [ ! -d "$raw" ]; then
+        raw="$REPO_ROOT"
+    fi
+    (cd "$raw" && pwd -P)
+}
+
+# Resolve a repo-relative or absolute path under REPO_ROOT / SESSION_CWD.
+_resolve_config_path() {
+    local raw="$1"
+    case "$raw" in
+        /*) printf '%s' "$raw" ;;
+        *)  printf '%s' "$REPO_ROOT/$raw" ;;
+    esac
+}
+
+# Path to a custom bash rc for the `term` session, or empty when disabled /
+# missing. Priority: explicit TERM_BASHRC (when set and the file exists) ->
+# $SESSION_CWD/tmux-agents/term.bashrc (project overlay).
+resolve_term_bashrc_path() {
+    local raw path project
+    raw="${TERM_BASHRC:-}"
+    case "$raw" in
+        0|none|"") ;;
+        *)
+            path="$(_resolve_config_path "$raw")"
+            if [ -f "$path" ]; then
+                printf '%s' "$path"
+                return 0
+            fi
+            ;;
+    esac
+    project="${SESSION_CWD:-}/tmux-agents/term.bashrc"
+    if [ -n "${SESSION_CWD:-}" ] && [ -f "$project" ]; then
+        printf '%s' "$project"
+    fi
+}
+
+# When non-empty, argv to pass to tmux new-session to launch an interactive bash
+# with the term-only rc file. Empty -> tmux uses the user's default $SHELL.
+term_shell_argv() {
+    local rc
+    rc="$(resolve_term_bashrc_path)"
+    [ -n "$rc" ] || return 0
+    printf '%s\0%s\0%s\0%s\0' bash --rcfile "$rc" -i
+}
+
+# Export paths the agent needs while its shell cwd is SESSION_CWD (often a project
+# repo, not agentic-terminal). Safe to call on existing sessions too.
+set_session_env() {
+    local target="$1"
+    tmux set-environment -t "$target" AGENTIC_TERMINAL_ROOT "$REPO_ROOT" 2>/dev/null || true
+    tmux set-environment -t "$target" SESSION_CWD "$SESSION_CWD" 2>/dev/null || true
+}
+
+# Show agent busy/free in the `term` session status bar (session-local options).
+# Refreshes every AGENT_STATUS_INTERVAL seconds via tmux `#()` → agent-status.sh.
+# Safe to call on create and on reuse (idempotent).
+configure_term_status_bar() {
+    [ "${AGENT_STATUS_BAR:-1}" = "1" ] || return 0
+    tmux has-session -t "$TERM_SESSION" 2>/dev/null || return 0
+    local interval="${AGENT_STATUS_INTERVAL:-1}"
+    local status_cmd
+    status_cmd="env AGENT_SESSION=${AGENT_SESSION} TERM_SESSION=${TERM_SESSION} ${SCRIPT_DIR}/agent-status.sh"
+    tmux set-option -t "$TERM_SESSION" status on
+    tmux set-option -t "$TERM_SESSION" status-interval "$interval"
+    tmux set-option -t "$TERM_SESSION" status-left-length 40
+    tmux set-option -t "$TERM_SESSION" status-right-length 40
+    tmux set-option -t "$TERM_SESSION" status-style "bg=colour235,fg=colour250"
+    tmux set-option -t "$TERM_SESSION" status-left "#[fg=colour75] #S #[default]"
+    tmux set-option -t "$TERM_SESSION" status-right "#($status_cmd) "
+}
+
+# Kickoff text typed into the agent on first start (absolute paths for reads;
+# toolkit script paths expanded from AGENTIC_TERMINAL_ROOT).
+build_agent_kickoff() {
+    local kickoff="${AGENT_BOOTSTRAP}"
+    kickoff="${kickoff//\$AGENTIC_TERMINAL_ROOT/$REPO_ROOT}"
+    kickoff="${kickoff//\$\{AGENTIC_TERMINAL_ROOT\}/$REPO_ROOT}"
+    kickoff="${kickoff//\$SESSION_CWD/$SESSION_CWD}"
+
+    if [ -z "${AGENT_PROJECT_CAPS_DIR:-}" ] && [ -d "$SESSION_CWD/tmux-agents/rules" ]; then
+        AGENT_PROJECT_CAPS_DIR="$SESSION_CWD/tmux-agents"
+    fi
+    if [ -n "${AGENT_PROJECT_CAPS_DIR:-}" ] && [ -d "$AGENT_PROJECT_CAPS_DIR/rules" ]; then
+        kickoff="${kickoff} Also read every file in ${AGENT_PROJECT_CAPS_DIR}/rules/ and follow them."
+    fi
+    printf '%s' "$kickoff"
+}
+
 require_term_session() {
     if ! tmux has-session -t "$TERM_SESSION" 2>/dev/null; then
         echo "[agentic-terminal] No tmux session '$TERM_SESSION'. Run start.sh first." >&2
@@ -63,7 +156,7 @@ selftest_ping_path() {
     if ! tmux new-session -d -s "$scratch" "bash -c 'cat >> \"$out\"'" 2>/dev/null; then
         rm -f "$out"; return 2
     fi
-    printf 'x$ # agentic selftest ping\n' | \
+    printf 'x$ # agentic selftest ping\nx$ \n' | \
         AGENT_SESSION="$scratch" AGENT_SUBMIT_DELAY=0 AGENT_AUTOPING=1 PING_MIN_INTERVAL=0 \
         COMMENT_PREFIX="$COMMENT_PREFIX" PING_TRIGGER_FILE="$(ping_trigger_path)" \
         bash "$SCRIPT_DIR/term-watch.sh" /dev/null >/dev/null 2>&1 || true
@@ -94,13 +187,15 @@ attach_watcher() {
         "$(basename "$WATCHER_LOG" .log)" "$AGENT_SESSION" "$TERM_SESSION" \
         "${1:-started}" "$(date)" >> "$WATCHER_LOG"
     ln -sfn "$(basename "$WATCHER_LOG")" "$WATCHER_LINK"
-    # Idempotent (re)attach: NEVER use `pipe-pane -o` here -- with an existing
-    # pipe `-o` TOGGLES IT OFF instead of replacing, so a reload of a healthy
-    # watcher would silently kill auto-ping. Explicitly close any current pipe,
-    # then open the new one so we always end up attached to the fresh watcher.
+    # Idempotent (re)attach: close any current pipe first, then open with `-o`
+    # (output only). Never call `pipe-pane -o` while a pipe is still open — that
+    # toggles it off — but after the explicit close below, `-o` is correct and
+    # matches integration tests.
     tmux pipe-pane -t "$TERM_SESSION" 2>/dev/null || true
-    tmux pipe-pane -t "$TERM_SESSION" \
+    tmux pipe-pane -o -t "$TERM_SESSION" \
         "AGENT_SESSION='$AGENT_SESSION' TERM_SESSION='$TERM_SESSION' AGENT_SUBMIT_DELAY='$AGENT_SUBMIT_DELAY' AGENT_AUTOPING='$AGENT_AUTOPING' COMMENT_PREFIX='$COMMENT_PREFIX' SEND_MARKER='$SEND_MARKER' SEND_MARKER_REPL='$SEND_MARKER_REPL' PING_TRIGGER_FILE='$ping_file' PING_MIN_INTERVAL='$PING_MIN_INTERVAL' PING_ACK='$PING_ACK' PING_ACK_MS='$PING_ACK_MS' exec '$SCRIPT_DIR/term-watch.sh' '$WATCHER_LOG'"
+    # Keep the term status bar in sync when the watcher is (re)attached.
+    configure_term_status_bar
 }
 
 # Fingerprint of the agent pane's CURRENTLY VISIBLE screen (no scrollback, so
@@ -207,4 +302,32 @@ _show_session_welcome() {
         fi
         tmux send-keys -t "$target" Enter
     done
+}
+
+# Last non-empty line of the `term` pane (usually the active prompt).
+term_prompt_tail() {
+    tmux capture-pane -pt "$TERM_SESSION" -S -100 2>/dev/null | awk 'NF{p=$0} END{print p}' || true
+}
+
+# True when `term` is at a Python/IPython REPL prompt (uses `#` comments, not `:`).
+term_is_repl_hash_comment() {
+    local tail
+    tail="$(term_prompt_tail)"
+    printf '%s' "$tail" | grep -qE '^>>>[[:space:]]*$|^In \[[0-9]+\]:[[:space:]]*$'
+}
+
+# Build a visible status command for the active `term` interpreter. Never uses
+# COMMENT_PREFIX — those lines are human prompts and trigger auto-ping.
+term_say_command() {
+    local msg="$1"
+    if term_is_repl_hash_comment; then
+        if command -v python3 >/dev/null 2>&1; then
+            printf 'print(%s)' "$(python3 -c 'import sys; print(repr(sys.argv[1]))' "$msg")"
+        else
+            local esc="${msg//\'/\\\'}"
+            printf "print('%s')" "$esc"
+        fi
+    else
+        printf 'echo %q' "$msg"
+    fi
 }

@@ -11,7 +11,7 @@
 load_ping_regex() {
     local prefix="${1:-${COMMENT_PREFIX:-#}}"
     local file="${2:-${PING_TRIGGER_FILE:-}}"
-    local regex="(^|[^[:alnum:][:space:]][[:space:]]+)${prefix}([[:space:]]|\$)"
+    local regex="(^|[^[:alnum:][:space:]][[:space:]]+)${prefix}([[:space:]]|\$)|^In \\[[0-9]+\\]:[[:space:]]*${prefix}|^[[:space:]]*\\.\\.\\.:[[:space:]]*${prefix}"
     if [ -n "$file" ] && [ -f "$file" ]; then
         local loaded
         loaded="$(grep -vE '^[[:space:]]*(##|$)' "$file" 2>/dev/null | head -n1)"

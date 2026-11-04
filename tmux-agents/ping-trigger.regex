@@ -20,7 +20,11 @@
 ## example (no match):    ls -la
 ## example (no match):    total 0 items # trailing hash in program output
 ## example (no match):    echo "pass#123"   (no space before '#')
-(^|[^[:alnum:][:space:]][[:space:]]+)#([[:space:]]|$)
+## example (matches):     >>> # debug this   (Python stdlib REPL)
+## example (matches):     In [3]: # summarize   (IPython — # may follow : with no space)
+## example (matches):        ...: # continued   (IPython multiline)
+## example (no match):    code()  # inline   (output text — filtered in term-watch.sh)
+(^|[^[:alnum:][:space:]][[:space:]]+)#([[:space:]]|$)|^In \[[0-9]+\]:[[:space:]]*#|^[[:space:]]*\.\.\.:[[:space:]]*#
 ##
 ## --- Stricter: only a comment right after a classic prompt char ($, #, >, ]).
 ##     Use this if your prompt ends in one of those and you want the old behavior.

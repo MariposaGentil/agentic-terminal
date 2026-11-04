@@ -1,0 +1,31 @@
+# term.bashrc — aliases and functions for the `term` tmux session only.
+#
+# agentic-terminal ships tmux-agents/term.bashrc for this repo. For other
+# projects, copy this file to tmux-agents/term.bashrc (toolkit or project repo):
+#   cp tmux-agents/term.bashrc.example tmux-agents/term.bashrc
+#
+# start.sh launches term as: bash --rcfile <this-file> -i
+# The agent session and your regular terminals are unaffected.
+
+# Optional: keep your normal prompt, PATH, and shell setup.
+if [ -f "${HOME}/.bashrc" ]; then
+    # shellcheck source=/dev/null
+    source "${HOME}/.bashrc"
+fi
+
+# Toolkit paths (exported into term by start.sh).
+: "${AGENTIC_TERMINAL_ROOT:?AGENTIC_TERMINAL_ROOT not set}"
+: "${SESSION_CWD:=${SESSION_CWD:-$PWD}}"
+
+_at() { "$AGENTIC_TERMINAL_ROOT/scripts/$1" "${@:2}"; }
+
+alias atread='_at read.sh'
+alias atsend='_at send.sh'
+alias atsay='_at say.sh'
+alias atwatch='_at watch.sh status'
+alias atrequests='_at requests.sh'
+
+# Optional: route `make test` to the agentic-terminal suite (see term.bashrc).
+# make() { ... }
+
+# Add your term-only aliases and functions below.

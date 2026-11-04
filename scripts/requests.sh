@@ -33,9 +33,10 @@ marker_skip="(${sm_esc}|${smr_esc}) (BEGIN|DONE)"
 # (works with themed/powerline prompts) while ignoring mid-output hashes.
 mapfile -t comments < <(
     tmux capture-pane -pt "$TERM_SESSION" -S -5000 2>/dev/null \
+        | sed -E "s/^[[:space:]]*(In \[[0-9]+\]:|\.\.\.:|>>>)[[:space:]]*//" \
         | sed -nE "s/^(.*[^[:alnum:][:space:]][[:space:]]+)?(${prefix}[[:space:]]?.*)$/\2/p" \
         | sed -E "s/^${prefix}[[:space:]]?//" \
-        | grep -vE "^${marker_skip}|AGENT CMD|--- " || true
+        | grep -vE "^${marker_skip}|^AT: (BEGIN|DONE)|AGENT CMD|--- " || true
 )
 
 total="${#comments[@]}"

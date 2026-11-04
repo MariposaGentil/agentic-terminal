@@ -2,3 +2,4 @@
 # .gitkeep placeholder.
 /logs/*
 !/logs/.gitkeep
+tmp

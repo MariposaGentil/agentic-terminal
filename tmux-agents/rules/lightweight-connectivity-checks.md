@@ -5,9 +5,9 @@ auto-ping and the agent loop are alive (e.g. `# is this live?`,
 `# are pings working?`). For these:
 
 - **Do not** run extra scripts, edit code, or produce long reports.
-- **Do** reply in `term` with a single short line via `send.sh`, e.g.
+- **Do** reply in `term` with a single short line via `scripts/say.sh`, e.g.
   `[agent] Yes — live. Watcher HEALTHY.` (use the real watcher verdict if you
-  already ran `watch.sh status` on this poke).
+  already ran `watch.sh status` on this poke). Do **not** use a `#` comment line.
 - Then stop — wait for the next poke.
 
 Treat a comment as lightweight when, after stripping `#` and trimming, it is

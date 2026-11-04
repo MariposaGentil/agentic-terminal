@@ -131,6 +131,7 @@ case "$cmd" in
         echo "[agentic-terminal] Watcher re-attached to '$TERM_SESSION'."
         echo "  transcript : $WATCHER_LOG"
         echo "  pointer    : $WATCHER_LINK"
+        configure_term_status_bar
         echo "[agentic-terminal] Verifying the ping chain..."
         if verify_ping_chain; then
             echo "[agentic-terminal] RESULT: auto-ping VERIFIED working."

@@ -5,19 +5,25 @@ named `agent`**. A human works in a **separate tmux session named `term`**. Your
 job is to observe and drive `term` on their behalf.
 
 You cannot type into `term` directly — you interact with it **only** through the
-scripts in `scripts/` (run them from the repo root, which is your current
-working directory):
+toolkit scripts under **`$AGENTIC_TERMINAL_ROOT/scripts/`** (env var set in your
+tmux session). Your shell cwd is **`$SESSION_CWD`** — the same directory as
+`term`, usually where the human ran `make start` / `atstart`. See
+`rules/session-workdir.md`.
 
 | Tool | What it does |
 |---|---|
-| `scripts/read.sh [lines]` | Snapshot the `term` pane (the human's input, commands, and their output). Use it to understand the current state/context. |
-| `scripts/requests.sh` | Print the human's not-yet-processed instructions — lines they typed in `term` starting with `#`. Each is a task for you. |
-| `echo 'CMD' \| scripts/send.sh` | Type `CMD` into `term` and get its output back. This is how you act. |
-| `scripts/watch.sh [status\|reload\|selftest]` | Diagnose/repair+verify auto-ping (the pane watcher). Use `reload` if pings stop arriving — it re-attaches and prints `[PASS]`/`[FAIL]` for the whole ping chain. |
+| `$AGENTIC_TERMINAL_ROOT/scripts/read.sh [lines]` | Snapshot the `term` pane (the human's input, commands, and their output). Use it to understand the current state/context. |
+| `$AGENTIC_TERMINAL_ROOT/scripts/requests.sh` | Print the human's not-yet-processed instructions — lines they typed in `term` starting with `#`. Each is a task for you. |
+| `echo 'CMD' \| $AGENTIC_TERMINAL_ROOT/scripts/send.sh` | Type `CMD` into `term` and get its output back. This is how you act. |
+| `$AGENTIC_TERMINAL_ROOT/scripts/say.sh 'MSG'` | Show a visible status line in `term` via `echo`/`print` — never `#` (that triggers auto-ping). |
+| `$AGENTIC_TERMINAL_ROOT/scripts/log-snippet.sh [--title T] [text]` | Append copy-paste-ready code to `logs/agent.current.log` — **not** sent to `term`. |
+| `$AGENTIC_TERMINAL_ROOT/scripts/watch.sh [status\|reload\|selftest]` | Diagnose/repair auto-ping (the pane watcher). Use `reload` if pings stop arriving — it re-attaches and prints `[PASS]`/`[FAIL]` for the whole ping chain. |
+| `echo 'make test' \| $AGENTIC_TERMINAL_ROOT/scripts/send.sh` | Run the **agentic-terminal** test suite in `term` (when `tmux-agents/term.bashrc` is loaded). Prefer this over running tests only in your agent shell — `term` is the shared workspace. |
 
 A full transcript of your `term` session (every command + output) is written to
-`logs/<your-session>.current.log` (default `logs/agent.current.log`) — read it if
-you need history beyond what `read.sh` currently shows on screen.
+`$AGENTIC_TERMINAL_ROOT/logs/<your-session>.current.log` (default
+`logs/agent.current.log`) — read it if you need history beyond what `read.sh`
+currently shows on screen.
 
 ## Your capabilities live in `tmux-agents/`
 
@@ -37,7 +43,17 @@ those rules. Notable ones:
 - `rules/playful-exact-replies.md` — one-word replies for exact `# ping`, `# poke`,
   `# Auch! My eye!`.
 - `rules/know-where-term-is.md` — detect shell vs REPL vs pager before sending.
+- `rules/term-status-output.md` — use `echo`/`print` (or `say.sh`) for status in
+  `term`; never `#` comments (they trigger auto-ping).
 - `rules/driving-rules.md` — read before write, one task at a time, safety.
+- `rules/no-system-exit.md` — never `SystemExit` / `sys.exit` / `exit()` in code
+  sent to `term` (kills the REPL).
+- `rules/repl-exec-for-multi-block-python.md` — wrap multi-line Python for
+  `send.sh` in `exec('''…''')`; log paste-ready copies via `log-snippet.sh`.
+- `rules/session-workdir.md` — `term` and `agent` share `$SESSION_CWD`; run
+  toolkit scripts via `$AGENTIC_TERMINAL_ROOT/scripts/`.
+- `rules/project-tmux-agents-overlay.md` — also load `$SESSION_CWD/tmux-agents/`
+  when present (project-specific rules live in that repo, not here).
 
 If you didn't read the rules yet, read them now (`scripts/read.sh` is for
 `term`; use your own file-reading to open `tmux-agents/rules/*`).
@@ -58,13 +74,13 @@ any other message is itself a task unless it is a lightweight connectivity check
 
 ## Your loop
 
-1. **Catch up.** Run `scripts/read.sh` to see the current state of `term`.
-2. **Collect tasks.** Run `scripts/requests.sh` to get all pending instructions,
+1. **Catch up.** Run `$AGENTIC_TERMINAL_ROOT/scripts/read.sh` to see the current state of `term`.
+2. **Collect tasks.** Run `$AGENTIC_TERMINAL_ROOT/scripts/requests.sh` to get all pending instructions,
    in order.
 3. **Act.** For each instruction, plan the commands, run them with
-   `scripts/send.sh`, read the captured output, and iterate until done.
-4. **Report.** Give a concise summary in `term` (or your session) of what you
-   did and the outcome.
+   `$AGENTIC_TERMINAL_ROOT/scripts/send.sh`, read the captured output, and iterate until done.
+4. **Report.** Give a concise summary in `term` (via `$AGENTIC_TERMINAL_ROOT/scripts/say.sh` — never `#`
+   comments) or in your `agent` session of what you did and the outcome.
 5. **Wait for the next poke** (typically `ping`), then repeat from step 1.
 
 Follow `rules/driving-rules.md` and `rules/know-where-term-is.md` throughout.

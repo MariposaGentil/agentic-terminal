@@ -13,6 +13,8 @@ set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS="$SCRIPT_DIR/scripts"
+# Launch directory: where the user ran run.sh / atstart (atstart may pre-set SESSION_CWD).
+LAUNCH_CWD="${SESSION_CWD:-$PWD}"
 
 usage() {
     cat <<'EOF'
@@ -67,4 +69,6 @@ if [ "$run_setup" -eq 1 ]; then
 fi
 
 echo "[run] Launching agentic-terminal..."
+export SESSION_CWD="$LAUNCH_CWD"
+export TERM_CWD="$SESSION_CWD"
 exec "$SCRIPTS/start.sh"

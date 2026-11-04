@@ -7,7 +7,8 @@
 #
 # It does two things per line shown in `term`:
 #   1. appends a cleaned (ANSI-stripped) copy to the session log, and
-#   2. if the line matches the trigger regex, pings the agent session.
+#   2. when a fresh prompt appears after Enter, pings the agent if the committed
+#      line's first non-whitespace character is COMMENT_PREFIX (default `#`).
 #
 # Invoked by start.sh as the pipe-pane target:
 #   tmux pipe-pane -o -t term "... exec term-watch.sh <logfile>"
@@ -38,45 +39,84 @@ if [ -z "$PING_MIN_INTERVAL" ]; then
     PING_MIN_INTERVAL=$(( AGENT_SUBMIT_DELAY + 2 ))
 fi
 
-# Trigger regex: resolved by the shared loader (first non-'##', non-blank line of
-# PING_TRIGGER_FILE, else a prompt-agnostic default). Sourcing this file only
-# defines a function -- no set -e -- so the read loop below is unaffected.
 _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$_HERE/_ping_regex.sh"
-regex="$(load_ping_regex "$COMMENT_PREFIX" "$PING_TRIGGER_FILE")"
+# shellcheck source=/dev/null
+source "$_HERE/_agent_status.sh"
 
 # Remove terminal escape sequences (colors, bracketed-paste, titles) and CRs so
 # matching and the log are clean.
 strip_ansi() {
-    sed -E $'s/\x1b\\][^\x07]*\x07//g; s/\x1b\\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Za-z0-9]//g; s/\x1b//g; s/\r//g'
+    strip_ansi_status
 }
 
-# After stripping send.sh marker blocks, return non-empty human comment text (or
-# empty when only prompt residue remains).
-human_comment_remainder() {
-    local probe="$1"
-    probe="$(printf '%s' "$probe" | sed -E 's/^.*[^[:alnum:][:space:]][[:space:]]+//')"
-    probe="$(printf '%s' "$probe" | sed -E "s/^${COMMENT_PREFIX}[[:space:]]*//")"
-    probe="$(printf '%s' "$probe" | sed 's/[[:space:]]//g')"
-    printf '%s' "$probe"
+# Distinguish a human prompt comment from inline/output hashes (e.g. print text
+# containing "ninonano)  # erik@..." or "items # trailing"). Those can match
+# the broad trigger regex but must not auto-ping or they flood/rate-limit real
+# prompts — especially in a Python REPL where agent exec() output is common.
+is_human_prompt_comment() {
+    local line="$1"
+    # Explicit REPL prompt comments (IPython / stdlib / continuation).
+    if printf '%s' "$line" | grep -qE '^[[:space:]]*(In \[[0-9]+\]:|\.\.\.:|>>>)[[:space:]]*#'; then
+        return 0
+    fi
+    if printf '%s' "$line" | grep -qE '[[:alnum:]_\)][[:space:]]+#'; then
+        return 1
+    fi
+    return 0
 }
 
-PING_DEFER_LOCK="${TMPDIR:-/tmp}/agentic_terminal_${AGENT_SESSION}_ping_defer.lock"
+# True when the pane line is an empty / fresh prompt (no command text yet). A new
+# prompt after input means the previous buffer was committed with Enter — unlike
+# a soft-wrap redraw mid-typing, which never emits a prompt-only line.
+is_prompt_only_line() {
+    local line="$1"
+    line="${line%"${line##*[![:space:]]}"}"  # rtrim
+    [ -z "$line" ] && return 0
+    if printf '%s' "$line" | grep -qE '^[[:space:]]*(In \[[0-9]+\]:|>>>|\.\.\.:)[[:space:]]*$'; then
+        return 0
+    fi
+    # Shell prompt ends in a classic prompt symbol with only spaces after it.
+    printf '%s' "$line" | grep -qE '[]$#>%|][[:space:]]*$'
+}
+
+# After Enter, the committed command is the first line of the buffer (wrapped
+# continuations follow on later lines). Ping only when that command's first
+# non-whitespace character is COMMENT_PREFIX.
+committed_buffer_is_comment() {
+    local buf="$1" first probe
+    [ -n "$buf" ] || return 1
+    first="${buf%%$'\n'*}"
+    probe="$(strip_send_markers "$first")"
+    if ! is_human_prompt_comment "$probe"; then
+        return 1
+    fi
+    probe="$(printf '%s' "$probe" | sed -E 's/^[[:space:]]*(In \[[0-9]+\]:|\.\.\.:|>>>)[[:space:]]*//')"
+    # Do not put '#' in the prompt-char class: it is both a root prompt suffix and
+    # COMMENT_PREFIX, so `user$ # comment` would strip through the comment hash.
+    probe="$(printf '%s' "$probe" | sed -E 's/^.*[]$>%|][[:space:]]+//')"
+    # Root-style prompt ending in '#' before the comment: host:path# # comment
+    if printf '%s' "$probe" | grep -qE '^[^#]*#[[:space:]]+#'; then
+        probe="$(printf '%s' "$probe" | sed -E 's/^.*[^#]#[[:space:]]+//')"
+    fi
+    probe="${probe#"${probe%%[![:space:]]*}"}"  # ltrim
+    [ -n "$probe" ] || return 1
+    [ "${probe:0:1}" = "$COMMENT_PREFIX" ]
+}
+
 # Max half-second polls while waiting for the agent CLI to become idle.
 : "${PING_DEFER_MAX:=240}"
 
 ping_agent() {
+    local lock
+    lock="$(agent_ping_defer_lock)"
     # Coalesce: one deferred delivery picks up all pending comments.
-    if [ -f "$PING_DEFER_LOCK" ]; then
-        local old_pid
-        old_pid="$(cat "$PING_DEFER_LOCK" 2>/dev/null)" || true
-        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-            ping_ack_term queued
-            return 0
-        fi
-        rm -f "$PING_DEFER_LOCK"
+    if agent_ping_queued; then
+        ping_ack_term queued
+        return 0
     fi
+    rm -f "$lock"
 
     local busy_at_start=0
     agent_appears_busy && busy_at_start=1
@@ -95,10 +135,10 @@ ping_agent() {
         tmux send-keys -t "$AGENT_SESSION" Enter 2>/dev/null
     ) &
     ping_pid=$!
-    printf '%s' "$ping_pid" > "$PING_DEFER_LOCK"
+    printf '%s' "$ping_pid" > "$lock"
     (
         wait "$ping_pid" 2>/dev/null || true
-        rm -f "$PING_DEFER_LOCK"
+        rm -f "$lock"
     ) &
 
     if [ "$busy_at_start" = "1" ]; then
@@ -123,40 +163,36 @@ ping_ack_term() {
     tmux display-message -d "${PING_ACK_MS:-3000}" -t "$TERM_SESSION" "$msg" 2>/dev/null || true
 }
 
-# Best-effort: is the agent CLI mid-task (not idle at a prompt)?
-agent_appears_busy() {
-    local tail
-    tail="$(tmux capture-pane -pt "$AGENT_SESSION" -S -12 2>/dev/null | strip_ansi | tail -8)" || return 1
-    printf '%s' "$tail" | grep -qE '(Thinking|Running|Generating|⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|\.\.\.$|…)' && return 0
-    return 1
-}
-
 last_ping=""
 last_ping_ts=0
+input_buffer=""
 while IFS= read -r raw; do
     line="$(printf '%s' "$raw" | strip_ansi)"
     printf '%s\n' "$line" >> "$LOG"
 
-    [ "${AGENT_AUTOPING:-1}" = "1" ] || continue
-    # Strip send.sh markers (SEND_MARKER up to the next '#') so the agent never
-    # self-pings. Do not drop the whole line: an interactive REPL can redraw a
-    # marker and a HUMAN comment onto one line, and that comment must still be
-    # detected.
-    probe="$(strip_send_markers "$line")"
-    [ -z "$(human_comment_remainder "$probe")" ] && continue
-    if printf '%s' "$probe" | grep -qE -- "$regex"; then
-        # Debounce identical consecutive matches (e.g. pane redraws).
-        [ "$probe" = "$last_ping" ] && continue
-        # Rate-limit: never type a new ping before the previous one has been
-        # submitted, or the texts merge into "pingping". A single ping already
-        # makes the agent re-read ALL pending comments, so collapsing bursts is
-        # correct, not lossy.
-        if [ "$PING_MIN_INTERVAL" -gt 0 ] 2>/dev/null; then
-            now="$(date +%s)"
-            [ "$((now - last_ping_ts))" -lt "$PING_MIN_INTERVAL" ] && continue
-            last_ping_ts="$now"
+    if is_prompt_only_line "$line"; then
+        if [ "${AGENT_AUTOPING:-1}" = "1" ] && committed_buffer_is_comment "$input_buffer"; then
+            probe="$(strip_send_markers "${input_buffer%%$'\n'*}")"
+            # Debounce identical consecutive matches (e.g. pane redraws).
+            [ "$probe" = "$last_ping" ] && { input_buffer=""; continue; }
+            # Rate-limit: never type a new ping before the previous one has been
+            # submitted, or the texts merge into "pingping". A single ping already
+            # makes the agent re-read ALL pending comments, so collapsing bursts is
+            # correct, not lossy.
+            if [ "$PING_MIN_INTERVAL" -gt 0 ] 2>/dev/null; then
+                now="$(date +%s)"
+                [ "$((now - last_ping_ts))" -lt "$PING_MIN_INTERVAL" ] && { input_buffer=""; continue; }
+                last_ping_ts="$now"
+            fi
+            last_ping="$probe"
+            ping_agent
         fi
-        last_ping="$probe"
-        ping_agent
+        input_buffer=""
+    else
+        if [ -n "$input_buffer" ]; then
+            input_buffer="${input_buffer}"$'\n'"${line}"
+        else
+            input_buffer="$line"
+        fi
     fi
 done

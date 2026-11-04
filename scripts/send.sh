@@ -39,10 +39,7 @@ run_id="$$${RANDOM}"
 # Pick a marker prefix valid for the active interpreter (: no-op in bash/zsh;
 # # comment in Python/IPython). Auto-ping strips both forms before matching.
 pick_send_marker() {
-    local tail
-    # Last non-empty line is the active prompt (pane tail is often blank lines).
-    tail="$(tmux capture-pane -pt "$TERM_SESSION" -S -100 2>/dev/null | awk 'NF{p=$0} END{print p}')" || true
-    if printf '%s' "$tail" | grep -qE '^>>>[[:space:]]*$|^In \[[0-9]+\]:[[:space:]]*$'; then
+    if term_is_repl_hash_comment; then
         printf '%s' "${SEND_MARKER_REPL:-# AT:}"
     else
         printf '%s' "${SEND_MARKER:-: AT:}"

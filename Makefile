@@ -23,7 +23,7 @@ help: ## Show this help
 	@echo "Args: make read LINES=500 | make send CMD='ls -la'"
 
 run: ## Verify environment, then launch agent + terminal (setup + start)
-	@./run.sh
+	@SESSION_CWD="$${SESSION_CWD:-$$PWD}" TERM_CWD="$${TERM_CWD:-$$SESSION_CWD}" ./run.sh
 
 setup: ## Verify prerequisites and make the toolkit executable
 	@./scripts/setup.sh
@@ -32,7 +32,7 @@ install-deps: ## Verify prerequisites and apt-install missing ones
 	@./scripts/setup.sh --install-deps
 
 start: ## Create both tmux sessions and open the term window
-	@./scripts/start.sh
+	@SESSION_CWD="$${SESSION_CWD:-$$PWD}" TERM_CWD="$${TERM_CWD:-$$SESSION_CWD}" ./scripts/start.sh
 
 stop: ## Tear down both tmux sessions
 	@./scripts/stop.sh

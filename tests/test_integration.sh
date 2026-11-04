@@ -16,7 +16,7 @@ TERM_W="ci_watch_$$"
 AGENT_W="ci_wagent_$$"
 
 cleanup_sessions() {
-    for s in "$TERM_A" "$AGENT_A" "$TERM_B" "$TERM_PY" "$TERM_W" "$AGENT_W"; do
+    for s in "$TERM_A" "$AGENT_A" "$TERM_B" "$TERM_PY" "$TERM_W" "$AGENT_W" "${TERM_A}_say" "${TERM_A}_say_agent" "ci_agent_py_$$"; do
         tmux kill-session -t "$s" 2>/dev/null
     done
 }
@@ -76,9 +76,49 @@ if command -v python3 >/dev/null 2>&1; then
     sleep 1.2
     outp="$(printf 'print(6*7)\n' | TERM_SESSION="$TERM_PY" AGENT_TIMEOUT=20 bash "$REPO_ROOT/scripts/send.sh")"
     assert_contains "$outp" "42" "send.sh: works in a python3 REPL (shell-agnostic)"
+
+    # C2) Auto-ping in a python3 REPL (`>>> # comment`).
+    agent_py="ci_agent_py_$$"
+    py_in="$TMP/agent_py_in.txt"
+    : > "$py_in"
+    tmux new-session -d -s "$agent_py" "bash -c 'cat >> \"$py_in\"'"
+    tmux pipe-pane -o -t "$TERM_PY" \
+        "AGENT_SESSION='$agent_py' AGENT_SUBMIT_DELAY=0 AGENT_AUTOPING=1 COMMENT_PREFIX='#' PING_TRIGGER_FILE='$REPO_ROOT/tmux-agents/ping-trigger.regex' PING_MIN_INTERVAL=0 exec '$REPO_ROOT/scripts/term-watch.sh' /dev/null"
+    sleep 0.4
+    tmux send-keys -t "$TERM_PY" "# repl auto-ping please" Enter
+    py_ping=0
+    for _ in $(seq 1 40); do
+        grep -q "ping" "$py_in" 2>/dev/null && { py_ping=1; break; }
+        sleep 0.2
+    done
+    assert_eq "1" "$py_ping" "auto-ping: a '# comment' in python3 REPL pings the agent"
+    tmux kill-session -t "$agent_py" 2>/dev/null || true
 else
     skip "send.sh python3 REPL test" "python3 not installed"
 fi
+
+# ---------------------------------------------------------------------------
+# E) say.sh uses echo/print (never #) and does not trigger auto-ping.
+# ---------------------------------------------------------------------------
+tmux new-session -d -s "${TERM_A}_say" "bash --norc --noprofile"
+tmux send-keys -t "${TERM_A}_say" "PS1='Y\$ '" Enter
+sleep 0.4
+agent_say="${TERM_A}_say_agent"
+agent_say_in="$TMP/agent_say_in.txt"
+: > "$agent_say_in"
+tmux new-session -d -s "$agent_say" "bash -c 'cat >> \"$agent_say_in\"'"
+tmux pipe-pane -o -t "${TERM_A}_say" \
+    "AGENT_SESSION='$agent_say' AGENT_SUBMIT_DELAY=0 AGENT_AUTOPING=1 COMMENT_PREFIX='#' PING_TRIGGER_FILE='$REPO_ROOT/tmux-agents/ping-trigger.regex' exec '$REPO_ROOT/scripts/term-watch.sh' /dev/null"
+sleep 0.4
+before_say="$(grep -c "ping" "$agent_say_in" 2>/dev/null || true)"
+TERM_SESSION="${TERM_A}_say" AGENT_TIMEOUT=20 bash "$REPO_ROOT/scripts/say.sh" '[agent] working on it'
+sleep 1.2
+after_say="$(grep -c "ping" "$agent_say_in" 2>/dev/null || true)"
+assert_eq "$before_say" "$after_say" "say.sh: status line does not auto-ping"
+rd_say="$(TERM_SESSION="${TERM_A}_say" bash "$REPO_ROOT/scripts/read.sh" 80)"
+assert_contains "$rd_say" "[agent] working on it" "say.sh: message visible in term"
+tmux kill-session -t "${TERM_A}_say" 2>/dev/null || true
+tmux kill-session -t "$agent_say" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # D) watch.sh can DIAGNOSE and REPAIR a broken watcher. Uses scratch sessions
