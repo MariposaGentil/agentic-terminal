@@ -19,6 +19,8 @@ source "$SCRIPT_DIR/_ping_regex.sh"
 # Tracks how many `# ...` comment requests in the `term` pane have already been
 # handed to the agent, so a poke only surfaces new ones. Reset by start.sh.
 COMMENT_STATE="${TMPDIR:-/tmp}/agentic_terminal_${TERM_SESSION}_last_comment"
+# Active prompt-level BEGIN/DONE pair (one per human `#` task). See prompt-work.sh.
+PROMPT_WORK_STATE="${TMPDIR:-/tmp}/agentic_terminal_${TERM_SESSION}_prompt_work"
 
 require_tmux() {
     if ! command -v tmux >/dev/null 2>&1; then
@@ -330,4 +332,52 @@ term_say_command() {
     else
         printf 'echo %q' "$msg"
     fi
+}
+
+# Pick send.sh / prompt-work.sh marker prefix for the active `term` interpreter.
+pick_send_marker() {
+    if term_is_repl_hash_comment; then
+        printf '%s' "${SEND_MARKER_REPL:-# AT:}"
+    else
+        printf '%s' "${SEND_MARKER:-: AT:}"
+    fi
+}
+
+# Type one line into `term` and submit with Enter.
+term_send_line() {
+    tmux send-keys -t "$TERM_SESSION" -l "$1"
+    tmux send-keys -t "$TERM_SESSION" Enter
+}
+
+# Strip terminal escape sequences from captured pane text.
+strip_ansi_pane() {
+    sed -E $'s/\x1b\\][^\x07]*\x07//g; s/\x1b\\[[0-9;?]*[A-Za-z]//g; s/\x1b[()][A-Za-z0-9]//g; s/\x1b//g; s/\r//g'
+}
+
+# After a quick one-liner (e.g. say.sh), wait until the prompt line stabilizes.
+wait_term_idle_prompt() {
+    local timeout="${1:-15}"
+    local deadline stable=0 prev=""
+    deadline=$(( $(date +%s) + timeout ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        local tail
+        tail="$(term_prompt_tail)"
+        if [ -n "$tail" ] && [ "$tail" = "$prev" ]; then
+            stable=$((stable + 1))
+            [ "$stable" -ge 2 ] && return 0
+        else
+            stable=0
+        fi
+        prev="$tail"
+        sleep 0.25
+    done
+    return 1
+}
+
+agent_session_id() {
+    local agent_id="${AGENT_SESSION_ID:-${CURSOR_CONVERSATION_ID:-}}"
+    if [ -z "$agent_id" ]; then
+        agent_id="$(whoami)@$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)"
+    fi
+    printf '%s' "$agent_id"
 }

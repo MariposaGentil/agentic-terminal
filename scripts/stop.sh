@@ -17,4 +17,4 @@ for session in "$AGENT_SESSION" "$TERM_SESSION"; do
     fi
 done
 
-rm -f "$COMMENT_STATE"
+rm -f "$COMMENT_STATE" "$PROMPT_WORK_STATE"

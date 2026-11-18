@@ -350,12 +350,15 @@ records how many it has handled in a state file
 resurfaced. The agent turns each comment into work and runs it via
 [`scripts/send.sh`](scripts/send.sh), which types lines with `tmux send-keys`:
 
-- types a `: AT:` marker line (bash/zsh no-op; not a `#` comment) carrying the
-  agent identifier + a unique begin marker,
+- types a `: AT: SEND BEGIN` marker (per command, no session id),
 - types your command verbatim,
-- types a `: AT:` done marker,
+- types a `: AT: SEND DONE` marker,
 - polls `capture-pane -J` until the done marker appears, then prints everything
   between the two markers (the command echo and its output).
+
+Once per human `#` task, the agent uses [`scripts/prompt-work.sh`](scripts/prompt-work.sh)
+for the single visible `AT: BEGIN … session:[…]` / `AT: DONE` pair, and
+[`scripts/say.sh`](scripts/say.sh) for short step status lines (no extra markers).
 
 Using `: AT:` markers (instead of `#` comments or shell builtins like `printf`/
 `{ …; }`/`$?`) lets the agent tell *its* output apart from yours, know when a
@@ -415,8 +418,9 @@ and a manual `ping` in the agent chat works even while the watcher is down.
 | `run.sh` | Entrypoint: verify environment, then launch (setup + start). |
 | `scripts/setup.sh` | Verify prerequisites and make the toolkit executable. |
 | `scripts/start.sh` | Create both sessions, prompt the detached agent, count down, then open `term` and print how to reach the agent (self-heals a broken watcher on reuse). |
-| `scripts/send.sh` | Run a command in `term` and capture its output. |
-| `scripts/say.sh` | Show a status line in `term` (never `#`; does not trigger auto-ping). |
+| `scripts/send.sh` | Run a command in `term` and capture its output (per-command `SEND` markers). |
+| `scripts/prompt-work.sh` | Once per human `#` task: type the single `AT: BEGIN` / `AT: DONE` pair. |
+| `scripts/say.sh` | Short step status in `term` (never `#`; does not trigger auto-ping). |
 | `scripts/log-snippet.sh` | Append copy-paste-ready text to `logs/agent.current.log` (not sent to `term`). |
 | `scripts/read.sh` | Snapshot the `term` pane (context). |
 | `scripts/requests.sh` | Collect unprocessed `#` comment-prompts. |

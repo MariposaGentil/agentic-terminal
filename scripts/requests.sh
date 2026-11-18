@@ -24,7 +24,7 @@ fi
 prefix="$COMMENT_PREFIX"
 sm_esc="$(printf '%s' "$SEND_MARKER" | sed 's/[][\\.*^$()+?{|]/\\&/g')"
 smr_esc="$(printf '%s' "${SEND_MARKER_REPL:-# AT:}" | sed 's/[][\\.*^$()+?{|]/\\&/g')"
-marker_skip="(${sm_esc}|${smr_esc}) (BEGIN|DONE)"
+marker_skip="(${sm_esc}|${smr_esc}) (SEND )?(BEGIN|DONE)"
 
 # Extract typed comment lines: strip an optional prompt prefix that ends in a
 # SYMBOL (non-alnum, non-space: $, >, %, ], or a powerline glyph) + whitespace,

@@ -84,10 +84,17 @@ assert_eq "2" "$(pings)" "two distinct comments produce two pings"
 
 # 6) The agent's own send.sh marker lines must NOT trigger a ping (no self-ping).
 run_watch "$DEFAULT_RE" 1 \
+    'u$ : AT: SEND BEGIN 12345' 'u$ ' \
+    'u$ echo hello' 'u$ ' \
+    'u$ : AT: SEND DONE 12345' 'u$ '
+assert_eq "0" "$(pings)" "agent's own : AT: SEND lines do not self-ping"
+
+# 6a) Prompt-level BEGIN/DONE (prompt-work.sh) must not self-ping either.
+run_watch "$DEFAULT_RE" 1 \
     'u$ : AT: BEGIN 12345 session:[abc]' 'u$ ' \
     'u$ echo hello' 'u$ ' \
     'u$ : AT: DONE 12345' 'u$ '
-assert_eq "0" "$(pings)" "agent's own : AT: lines do not self-ping"
+assert_eq "0" "$(pings)" "agent's own : AT: prompt bookends do not self-ping"
 
 # 6b) A HUMAN comment merged onto the same line as a marker (as happens when an
 #     IPython prompt redraws) MUST still ping — the marker is stripped, not the
@@ -112,10 +119,10 @@ assert_eq "0" "$(pings)" "welcome banner : lines do not auto-ping"
 
 # 6e) REPL-style `# AT:` markers (Python/IPython) must not self-ping.
 run_watch "$DEFAULT_RE" 1 \
-    '>>> # AT: BEGIN 12345 session:[abc]' '>>> ' \
+    '>>> # AT: SEND BEGIN 12345' '>>> ' \
     '>>> print(1)' '>>> ' \
-    '>>> # AT: DONE 12345' '>>> '
-assert_eq "0" "$(pings)" "agent's own # AT: REPL markers do not self-ping"
+    '>>> # AT: SEND DONE 12345' '>>> '
+assert_eq "0" "$(pings)" "agent's own # AT: SEND REPL markers do not self-ping"
 
 # 6f) Python stdlib REPL: a human `#` comment at `>>>` must ping.
 run_watch "$DEFAULT_RE" 1 \

@@ -30,6 +30,6 @@ strip_send_markers() {
     local esc esr
     esc="$(printf '%s' "$sm" | sed 's/[][\\.*^$()+?{|]/\\&/g')"
     esr="$(printf '%s' "$smr" | sed 's/[][\\.*^$()+?{|]/\\&/g')"
-    line="$(printf '%s' "$line" | sed -E "s/${esc} ?(BEGIN|DONE)[^#]*//g")"
-    printf '%s' "$line" | sed -E "s/${esr} ?(BEGIN|DONE)[^#]*//g"
+    line="$(printf '%s' "$line" | sed -E "s/${esc} ?((SEND )?(BEGIN|DONE))[^#]*//g")"
+    printf '%s' "$line" | sed -E "s/${esr} ?((SEND )?(BEGIN|DONE))[^#]*//g"
 }

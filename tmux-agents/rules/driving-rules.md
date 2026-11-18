@@ -12,9 +12,12 @@
 - **Be careful with destructive commands** (deletes, force-push, etc.). Prefer
   safe, reversible steps; when in doubt, ask via `term` before proceeding.
 - **Keep output concise** — a short header plus the relevant result.
-- **Status in `term`:** use `scripts/say.sh` (or `echo`/`print()` for the active
-  interpreter). Never `# …` lines — they are human prompts and trigger auto-ping
-  (see `term-status-output.md`).
+- **Prompt bookends:** `scripts/prompt-work.sh begin` once when you start a human
+  `#` task and `done` once when you finish — never once per `send.sh` (see
+  `prompt-work-markers.md`).
+- **Status in `term`:** at the start of each step, use `scripts/say.sh` with a
+  short plain-language line. Never `# …` lines — they are human prompts and
+  trigger auto-ping (see `term-status-output.md`).
 - **On error: stop and explain.** Show the failure and a one-line diagnosis;
   don't blindly retry. Never use `SystemExit`, `sys.exit`, or `exit()` in code
   sent to `term` — it kills the REPL (see `no-system-exit.md`).

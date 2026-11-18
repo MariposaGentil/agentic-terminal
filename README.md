@@ -71,8 +71,9 @@ The agent drives `term` through a small set of bash scripts in [`scripts/`](scri
 |---|---|---|
 | `setup.sh` | Verify prerequisites (`tmux`, agent, terminal), mark the toolkit executable, optionally install deps. | `scripts/setup.sh [--install-deps]` |
 | `start.sh` | Create (or reuse) the `term` and `agent` tmux sessions, prompt the detached agent, block until the agent is ready, then open `term` in the default terminal. Both sessions stay detached and the launching terminal is untouched (it just prints how to attach to each). | `scripts/start.sh` |
-| `send.sh` | Type a command (from stdin) into `term` using `: AT:` no-op markers (not `#`, so auto-ping ignores them), block until it finishes, and print the captured output. | `echo 'ls -la' \| scripts/send.sh` |
-| `say.sh` | Show a visible status line in `term` via `echo`/`print` (never `#`, so auto-ping ignores it). | `scripts/say.sh 'Working on tests...'` |
+| `send.sh` | Type a command into `term` with per-command `: AT: SEND BEGIN/DONE` markers (not `#`), block until it finishes, and print the captured output. | `echo 'ls -la' \| scripts/send.sh` |
+| `prompt-work.sh` | Once per human `#` task: type the single `AT: BEGIN … session:[…]` / `AT: DONE` pair in `term`. | `scripts/prompt-work.sh begin` … `done` |
+| `say.sh` | Short step status in `term` via `echo`/`print` (no `#`, no SEND markers). | `scripts/say.sh 'Running tests...'` |
 | `agent-status.sh` | Print agent busy/free/wait/offline for the `term` tmux status bar (`#(…)`). | `scripts/agent-status.sh` / `AGENT_STATUS_PLAIN=1 …` |
 | `log-snippet.sh` | Append copy-paste-ready text to the session log (`logs/agent.current.log`); not sent to `term`. | `scripts/log-snippet.sh --title 'step 1' <<'PY'` … `PY` |
 | `read.sh` | Print a raw snapshot of the `term` pane (with scrollback) so the agent can catch up on state. | `scripts/read.sh [lines]` |

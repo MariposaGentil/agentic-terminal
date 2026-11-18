@@ -5,6 +5,9 @@
 # COMMENT_PREFIX (`#`), which the human uses for prompts and which fires
 # auto-ping when it appears at a prompt.
 #
+# Does not use send.sh (no SEND markers) — pair with prompt-work.sh for
+# prompt-level BEGIN/DONE once per human task.
+#
 # Usage:
 #   scripts/say.sh 'Working on the test suite...'
 #   printf '%s' 'Step 2 done.' | scripts/say.sh
@@ -19,4 +22,5 @@ else
 fi
 [ -n "$msg" ] || exit 0
 
-printf '%s\n' "$(term_say_command "$msg")" | bash "$SCRIPT_DIR/send.sh"
+term_send_line "$(term_say_command "$msg")"
+wait_term_idle_prompt "${AGENT_SAY_TIMEOUT:-15}" || true

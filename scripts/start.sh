@@ -67,7 +67,7 @@ else
     fi
     set_session_env "$TERM_SESSION"
     # Fresh term -> forget which comment requests were already processed.
-    rm -f "$COMMENT_STATE"
+    rm -f "$COMMENT_STATE" "$PROMPT_WORK_STATE"
 
     # Attach the host-side watcher (pipe-pane): logs the transcript AND auto-pings
     # the agent on a trigger match. Because it consumes the pane stream (not the
